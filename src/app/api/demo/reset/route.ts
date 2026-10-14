@@ -1,0 +1,3 @@
+import { NextRequest,NextResponse } from 'next/server';import { db,demo,transaction } from '@/lib/db';import { requireAdmin,jsonError,sameOrigin } from '@/lib/http';
+export const runtime='nodejs';
+export async function POST(req:NextRequest){if(!sameOrigin(req))return jsonError('Permintaan lintas situs ditolak.',403);if(!await requireAdmin())return jsonError('Silakan login admin.',401);if(!demo)return jsonError('Mode demo tidak aktif.',404);await transaction(async(tx)=>{await tx.execute('DELETE v FROM visits v JOIN cards c ON c.id=v.card_id WHERE c.demo=1');await tx.execute('DELETE FROM cards WHERE demo=1')});return NextResponse.json({ok:true});}

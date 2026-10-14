@@ -1,0 +1,3 @@
+'use client';
+import {LanguageSwitcher,useLanguage} from '@/lib/i18n';
+export function DemoReview({card,source}:{card:string;source:string}){const {t}=useLanguage();return <main className="review-shell"><div className="review-language"><LanguageSwitcher/></div><div className="review-phone"><div className="review-icon">G</div><p className="eyebrow">{t('reviewPage')} · {source.toUpperCase()}</p><h1>{t('shareExperience')}</h1><p>{t('localSimulation')}</p><div className="stars">★★★★★</div><p className="muted">Card {card} · {t('demoMode')}</p><div className="success">{t('productionReview')}</div><a className="button button-outline" href="/flow-preview">{t('backFlow')}</a></div></main>}

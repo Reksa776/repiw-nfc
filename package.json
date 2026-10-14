@@ -1,0 +1,42 @@
+{
+  "name": "repiw-app-v1",
+  "version": "2.0.0",
+  "private": true,
+  "description": "REPIW NFC and QR card management",
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "prestart": "node scripts/check-production-env.js",
+    "start": "next start",
+    "test": "vitest run tests",
+    "test:e2e": "playwright test",
+    "migrate:sqlite": "node scripts/migrate-sqlite.js",
+    "admin:upsert": "node scripts/admin-account.js",
+    "db:migrate": "node scripts/migrate-mysql.js",
+    "db:seed": "node scripts/admin-account.js",
+    "db:import-sqlite": "node scripts/migrate-sqlite-to-mysql.js"
+  },
+  "engines": {
+    "node": ">=22.5.0"
+  },
+  "dependencies": {
+    "archiver": "^7.0.1",
+    "dotenv": "^16.4.7",
+    "mysql2": "^3.24.6",
+    "next": "^16.0.0",
+    "qrcode": "^1.5.4",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "zod": "^4.0.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.55.0",
+    "@types/archiver": "^6.0.3",
+    "@types/node": "^22.0.0",
+    "@types/qrcode": "^1.5.5",
+    "@types/react": "^19.0.0",
+    "@types/react-dom": "^19.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^5.0.4"
+  }
+}

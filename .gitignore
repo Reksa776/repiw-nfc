@@ -1,0 +1,11 @@
+node_modules/
+.env
+data/
+qa-screenshots/
+.next/
+.next-e2e/
+out/
+coverage/
+playwright-report/
+test-results/
+.tmp/

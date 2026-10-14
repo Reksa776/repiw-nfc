@@ -1,0 +1,32 @@
+import {test,expect} from '@playwright/test';
+
+test('admin generation, activation, NFC tracking, demo, and mobile layout',async({page})=>{
+ await page.goto('/admin');
+ await page.getByLabel('Username').fill('admin');
+ await page.locator('input[type=password]').fill('e2e-test-admin-password');
+ await page.getByRole('button',{name:'Sign in'}).click();
+ await expect(page.getByRole('heading',{name:'Good to see you, Admin'})).toBeVisible();
+ await page.getByLabel('Number of cards').selectOption('10');
+ await page.getByRole('button',{name:/Generate cards/}).click();
+ await expect(page.getByRole('heading',{name:'10 cards generated'})).toBeVisible();
+ const csvDownload=page.waitForEvent('download');await page.getByRole('button',{name:'Download CSV'}).click();
+ const download=await csvDownload;expect(download.suggestedFilename()).toContain('.csv');
+ const generated=await page.evaluate(async()=>{const r=await fetch('/api/admin/generate',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({count:1})});return {status:r.status,body:await r.json()}});
+ expect(generated.status).toBe(200);expect(generated.body.items).toHaveLength(1);
+ const item=generated.body.items[0];expect(item.qrURL).toContain('?src=qr');expect(item.nfcURL).toContain('?src=nfc');
+ const png=await page.request.get(`/api/admin/qr/${item.code}`);expect(png.status()).toBe(200);expect(png.headers()['content-type']).toContain('image/png');
+ const zip=await page.request.get('/api/admin/qr-zip');expect(zip.status()).toBe(200);expect((await zip.body()).subarray(0,2).toString()).toBe('PK');
+ const invalidCode=await page.request.post('/api/activate',{data:{code:'RP-0000000000',activationCode:'1234567890AB',reviewURL:'https://g.page/r/example/review'}});expect(invalidCode.status()).toBe(404);
+ const unsafeUrl=await page.request.post('/api/activate',{data:{code:item.code,activationCode:item.activationCode,reviewURL:'https://attacker.example/review'}});expect(unsafeUrl.status()).toBe(400);
+ const wrongSecret=await page.request.post('/api/activate',{data:{code:item.code,activationCode:'000000000000',reviewURL:'https://g.page/r/repiw-e2e/review'}});expect(wrongSecret.status()).toBe(401);
+ await page.goto(`/c/${item.code}?src=qr`);await page.locator('input[name=activationCode]').fill(item.activationCode);await page.locator('input[name=reviewURL]').fill('https://g.page/r/repiw-e2e/review');await page.getByRole('button',{name:'Aktifkan kartu'}).click();
+ await expect(page.getByText(new RegExp(`${item.code} sudah aktif`))).toBeVisible();
+ const repeated=await page.request.post('/api/activate',{data:{code:item.code,activationCode:item.activationCode,reviewURL:'https://g.page/r/repiw-e2e/review'}});expect(repeated.status()).toBe(409);
+ await page.goto(`/c/${item.code}?src=qr`);await expect(page).toHaveURL(new RegExp(`/demo-review\\?card=${item.code}&src=qr`));
+ await page.goto(`/c/${item.code}?src=nfc`);await expect(page).toHaveURL(new RegExp(`/demo-review\\?card=${item.code}&src=nfc`));
+ const stats=await page.request.get('/api/admin/stats').then(r=>r.json());expect(stats.qr).toBeGreaterThanOrEqual(1);expect(stats.nfc).toBeGreaterThanOrEqual(1);expect(stats.active).toBeGreaterThanOrEqual(1);
+ const noCard=await page.request.get('/api/card/RP-0000000000');expect(noCard.status()).toBe(404);
+ await page.goto('/flow-preview');await page.getByRole('button',{name:/Start interactive demo/}).click();await expect(page.getByText(/Demo workspace is ready/)).toBeVisible();
+ await page.goto('/admin');await page.getByRole('button',{name:'Sign out'}).click();await expect(page.locator('input[type=password]')).toBeVisible();expect((await page.request.get('/api/admin/stats')).status()).toBe(401);
+ await page.setViewportSize({width:390,height:844});await page.goto('/admin');await expect(page.locator('body')).toBeVisible();const width=await page.evaluate(()=>document.documentElement.scrollWidth);expect(width).toBeLessThanOrEqual(390);
+});

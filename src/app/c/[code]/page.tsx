@@ -1,0 +1,11 @@
+import { notFound,redirect } from 'next/navigation';
+import { db,demo } from '@/lib/db';import { recordVisit } from '@/lib/cards';
+import { ActivationForm } from '@/components/activation-form';
+export const runtime='nodejs',dynamic='force-dynamic';
+export default async function CardPage({params,searchParams}:{params:Promise<{code:string}>;searchParams:Promise<{src?:string|string[]}>}){
+ const {code}=await params,query=await searchParams;
+ const [card]=await db.query<{id:number;code:string;active:number;review_url:string|null}>('SELECT id,code,active,review_url FROM cards WHERE code=? LIMIT 1',[code]);
+ if(!card)notFound();const src=Array.isArray(query.src)?query.src[0]:query.src;const source=src==='nfc'?'nfc':'qr';
+ if(card.active){await recordVisit(card.id,source);if(demo)redirect(`/demo-review?card=${encodeURIComponent(card.code)}&src=${source}`);if(!card.review_url)notFound();redirect(card.review_url);}
+ return <ActivationForm code={card.code} source={source}/>;
+}
