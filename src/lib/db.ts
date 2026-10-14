@@ -1,64 +1,56 @@
 import 'server-only';
 import crypto from 'node:crypto';
-import { createPool, type Pool, type PoolConnection, type ResultSetHeader } from 'mysql2/promise';
+import { Pool, type PoolClient, type QueryResultRow } from 'pg';
 
 export const demo = process.env.DEMO_MODE === 'true';
 type SqlParams = unknown[];
+export type DbResult = { affectedRows: number; insertId: number; rows: QueryResultRow[] };
 export type DbExecutor = {
   query<T = Record<string, unknown>>(sql: string, params?: SqlParams): Promise<T[]>;
-  execute(sql: string, params?: SqlParams): Promise<ResultSetHeader>;
+  execute(sql: string, params?: SqlParams): Promise<DbResult>;
 };
 let pool: Pool | undefined;
 function getPool(): Pool {
   if (pool) return pool;
-  const host = process.env.MYSQL_HOST?.trim();
-  const user = process.env.MYSQL_USER?.trim();
-  const database = (demo ? process.env.MYSQL_DEMO_DATABASE : process.env.MYSQL_DATABASE)?.trim();
-  if (!host || !user || !database) {
-    throw new Error(`MySQL is not configured. Set MYSQL_HOST, MYSQL_USER, and ${demo ? 'MYSQL_DEMO_DATABASE' : 'MYSQL_DATABASE'} in .env.`);
-  }
-  const port = Number(process.env.MYSQL_PORT || 3306);
-  if (!Number.isInteger(port) || port < 1 || port > 65535) throw new Error('MYSQL_PORT must be a valid TCP port.');
-  const poolSize=Number(process.env.MYSQL_POOL_SIZE||10);
-  if(!Number.isInteger(poolSize)||poolSize<1||poolSize>50)throw new Error('MYSQL_POOL_SIZE must be an integer from 1 to 50.');
-  pool = createPool({
-    host, port, user, password: process.env.MYSQL_PASSWORD || '', database,
-    waitForConnections: true, connectionLimit: poolSize,
-    queueLimit: 0, charset: 'utf8mb4', timezone: 'Z', dateStrings: true,
-    supportBigNumbers: true, bigNumberStrings: false,
-    ssl: process.env.MYSQL_SSL === 'true' ? { rejectUnauthorized: true } : undefined,
-  });
+  const connectionString = process.env.DATABASE_URL?.trim();
+  if (!connectionString) throw new Error('Supabase is not configured. Set DATABASE_URL in .env.');
+  const poolSize = Number(process.env.PG_POOL_SIZE || 5);
+  if (!Number.isInteger(poolSize) || poolSize < 1 || poolSize > 50) throw new Error('PG_POOL_SIZE must be an integer from 1 to 50.');
+  pool = new Pool({ connectionString, max: poolSize, idleTimeoutMillis: 30_000, connectionTimeoutMillis: 10_000, application_name: 'repiw-nextjs' });
+  pool.on('error', (error) => console.error('Unexpected idle PostgreSQL client error', error));
   return pool;
 }
-async function runQuery<T>(executor: Pool | PoolConnection, sql: string, params: SqlParams = []): Promise<T[]> {
-  const [rows] = await executor.execute(sql, params as never[]);
-  return rows as T[];
+function pgSql(sql: string) {
+  let index = 0;
+  return sql.replace(/\?/g, () => `$${++index}`);
 }
-async function runExecute(executor: Pool | PoolConnection, sql: string, params: SqlParams = []): Promise<ResultSetHeader> {
-  const [result] = await executor.execute(sql, params as never[]);
-  return result as ResultSetHeader;
+async function runQuery<T>(executor: Pool | PoolClient, sql: string, params: SqlParams = []): Promise<T[]> {
+  const result = await executor.query<T & QueryResultRow>(pgSql(sql), params);
+  return result.rows as T[];
+}
+async function runExecute(executor: Pool | PoolClient, sql: string, params: SqlParams = []): Promise<DbResult> {
+  const result = await executor.query(pgSql(sql), params);
+  return { affectedRows: result.rowCount || 0, insertId: Number(result.rows[0]?.id || 0), rows: result.rows };
 }
 export const db: DbExecutor = {
   query: <T = Record<string, unknown>>(sql: string, params: SqlParams = []) => runQuery<T>(getPool(), sql, params),
   execute: (sql: string, params: SqlParams = []) => runExecute(getPool(), sql, params),
 };
 export async function transaction<T>(fn: (tx: DbExecutor) => Promise<T>): Promise<T> {
-  const connection = await getPool().getConnection();
+  const connection = await getPool().connect();
   try {
-    await connection.beginTransaction();
+    await connection.query('BEGIN');
     const tx: DbExecutor = {
       query: <R = Record<string, unknown>>(sql: string, params: SqlParams = []) => runQuery<R>(connection, sql, params),
       execute: (sql: string, params: SqlParams = []) => runExecute(connection, sql, params),
     };
     const result = await fn(tx);
-    await connection.commit();
+    await connection.query('COMMIT');
     return result;
   } catch (error) {
-    await connection.rollback();
+    await connection.query('ROLLBACK');
     throw error;
-  } finally {
-    connection.release();
-  }
+  } finally { connection.release(); }
 }
 export const closePool = async () => { if (pool) { const current = pool; pool = undefined; await current.end(); } };
 export const sha256 = (value: string) => crypto.createHash('sha256').update(value).digest('hex');

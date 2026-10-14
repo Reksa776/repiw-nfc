@@ -16,8 +16,10 @@ export async function POST(req:NextRequest) {
       for(let i=0;i<parsed.data.count;i++) {
         let code=makeCode(), secret=makeActivationCode(), attempts=0;
         while(true) {
-          try { await tx.execute('INSERT INTO cards(code,secret_hash,demo) VALUES(?,?,?)',[code,hashActivationCode(secret),demo?1:0]); break; }
-          catch(e) { if(++attempts>4) throw e; code=makeCode(); }
+          const inserted=await tx.query<{id:number|string}>('INSERT INTO cards(code,secret_hash,demo) VALUES(?,?,?) ON CONFLICT(code) DO NOTHING RETURNING id',[code,hashActivationCode(secret),demo?1:0]);
+          if(inserted.length)break;
+          if(++attempts>4)throw new Error('Could not allocate a unique card ID.');
+          code=makeCode();
         }
         items.push({code,activationCode:secret,qrURL:`${base}/c/${code}?src=qr`,nfcURL:`${base}/c/${code}?src=nfc`});
       }

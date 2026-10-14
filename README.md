@@ -1,63 +1,67 @@
-# REPIW V1
+# REPIW V1 · Next.js + Supabase
 
-REPIW manages NFC and QR Google Review cards, one-time activation codes, scan tracking, CSV/QR exports, and an admin dashboard built with Next.js App Router, React, and TypeScript.
+REPIW manages Google Review NFC/QR cards, one-time activation codes, scan tracking, exports, and an admin workspace. The current responsive UI, Indonesian/English setting, loading transitions, dashboard, and demo flow are kept. The app now connects to Supabase PostgreSQL from server-side code through `pg`.
 
-## Requirements
+## Connect Supabase
 
-- Node.js 22.5 or newer
-- MySQL 8.0+ (or a compatible MySQL service)
-- A MySQL user with access to both the production and demo databases
+1. In Supabase, create or open your project, click **Connect**, and copy the PostgreSQL connection URI. Use the connection mode that matches your host. Do not construct the host or username manually; copy the complete URI. See the [Supabase connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres).
+2. Copy `.env.example` to `.env`. Paste the URI into `DATABASE_URL`, replace the password placeholder if present, and URL-encode special characters in the password. Keep it private; never prefix it with `NEXT_PUBLIC_`.
+3. Set `SESSION_SECRET` to at least 32 random bytes. For local use, keep `BASE_URL=http://localhost:3000` and `DEMO_MODE=true`.
+4. Run these from the project directory:
 
-## Configure MySQL
+   ```sh
+   npm install
+   npm run db:migrate
+   npm run db:seed -- admin
+   npm run dev
+   ```
 
-Copy `.env.example` to `.env` and fill in the MySQL host, port, username, password, and database names. The app chooses `MYSQL_DEMO_DATABASE` when `DEMO_MODE=true` and `MYSQL_DATABASE` when `DEMO_MODE=false`. Keep those databases separate.
+The seed asks for the admin password twice without displaying it; use at least 8 characters. Open `http://localhost:3000/admin` and sign in as `admin`. To use a different username, pass it after `--`, for example `npm run db:seed -- reksa`.
 
-Create the two databases and grant the app user rights to create/alter tables and read/write data in both. Example for a local MySQL server (replace the password before running):
+`npm run db:migrate` is versioned and safe to rerun. It upgrades older Supabase schemas by adding the admin reference to `sessions` and normalizing a legacy boolean `cards.active` column to the integer format the app uses. Existing sessions without an admin link are cleared, so sign in again after that upgrade. Admin accounts all have the same dashboard access; this app does not apply per-role feature restrictions.
 
-```sql
-CREATE DATABASE repiw CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE DATABASE repiw_demo CHARACTER SET utf8mb4 COLLATE utf8mb4_unicode_ci;
-CREATE USER 'repiw_app'@'%' IDENTIFIED BY 'set-a-strong-password';
-GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON repiw.* TO 'repiw_app'@'%';
-GRANT SELECT, INSERT, UPDATE, DELETE, CREATE, ALTER, INDEX, REFERENCES ON repiw_demo.* TO 'repiw_app'@'%';
-FLUSH PRIVILEGES;
-```
+## View data
 
-The sample SQL is guidance; restrict the account host and network access for the actual deployment. Set `SESSION_SECRET` to a random value with at least 32 bytes. Use TLS (`MYSQL_SSL=true`) when your MySQL host provides a certificate trusted by Node.js.
+Open **Table Editor** in the Supabase dashboard. The migration creates `cards`, `visits`, `admins`, `sessions`, `rate_events`, `schema_migrations`, and `data_imports` in `public`. Demo and production cards share the database but are separated by the `demo` field; dashboard data and QR export follow `DEMO_MODE`. Use separate Supabase projects if you need stronger isolation.
 
-## Initialize and run
+The project uses the server-side `pg` driver and `DATABASE_URL`; it does not use `@supabase/supabase-js` or expose database credentials in the browser.
+
+## Existing flows
+
+- `/`: landing page with language switcher and loading animation.
+- `/admin`: database-backed login, card counts, card library, QR downloads, analytics, settings, and demo controls.
+- `/flow-preview` (`/demo`): interactive admin, buyer, customer, analytics, and error walkthrough.
+- `/c/RP-...?src=qr` or `?src=nfc`: activation for inactive cards; active cards record the source and redirect. Demo cards open `/demo-review`.
+- `/api/admin/generate`: unique card IDs and one-time activation codes; QR PNG/ZIP and CSV export.
+- `/api/activate`: validates and consumes a one-time activation code.
+
+Download the generated CSV right away. Codes appear once; the database stores only hashes. Put the `?src=qr` URL in the QR code and the matching `?src=nfc` URL on the NFC chip.
+
+## Import existing MySQL or SQLite data
+
+Back up the source and stop writes before importing. Run `npm run db:migrate` first. To transfer the old MySQL databases, keep their existing `MYSQL_*` source settings in `.env` and run each source exactly once:
 
 ```sh
-npm install
-npm run db:migrate
-npm run db:seed -- admin
-npm run dev
+npm run db:import-mysql -- demo
+npm run db:import-mysql -- production
 ```
 
-`db:migrate` initializes the selected MySQL database schema (schema version 1). Apply future schema changes with the migration scripts shipped with their app release. `db:seed` securely prompts for a username and an admin password (minimum 8 characters), stores a scrypt hash in the database selected by `DEMO_MODE`, and revokes sessions there. To seed the production account, set `DEMO_MODE=false` first and run it against `MYSQL_DATABASE`. For production, set `DEMO_MODE=false`, configure `BASE_URL` with HTTPS, and use a strong session secret.
+The MySQL importer maps visits by card code, so the demo and production databases can go into one Supabase project. It preserves card state, review URLs, activation hashes, and visit history; it skips admin records, sessions, and rate-limit history. Run the seed command to create a fresh admin in Supabase. `mysql2` is a development-only dependency for this one-time importer; the app runtime uses PostgreSQL only. Stop writes and import once. The fingerprint prevents an identical import from being repeated, but new source visits after an import would be appended again.
 
-## Import an existing SQLite database
+For older SQLite sources, use `npm run db:import-sqlite -- /absolute/path/to/repiw.sqlite`. It also maps visits by card code and skips sessions and rate-limit history. Keep source copies and verify totals in Table Editor before cutover. Do not use the SQLite importer against a MySQL database.
 
-Take a backup of the SQLite file first. On a copy of an older SQLite database, run `npm run migrate:sqlite -- /absolute/path/to/copy.sqlite` to bring it to the current SQLite source schema; this creates an additional backup. Configure `.env` so `DEMO_MODE` selects the matching destination database, then initialize MySQL and import the matching SQLite file:
+## Production notes
+
+Set production secrets through the host's secret manager: `NODE_ENV=production`, `DEMO_MODE=false`, an HTTPS `BASE_URL`, `DATABASE_URL`, a random `SESSION_SECRET`, and `TRUST_PROXY=true` only behind a trusted proxy. Keep `PG_POOL_SIZE` within the connection budget across all app instances.
+
+`npm start` checks configuration but does not test the Supabase connection or prove production readiness. Verify connection mode, TLS, backups/restore, database permissions, proxy headers, and monitoring in the deployed environment. The server database role, not browser RLS, authorizes these SQL queries.
+
+## Verification
 
 ```sh
-npm run db:migrate
-npm run db:import-sqlite -- /absolute/path/to/repiw.sqlite
+npm test
+npx tsc --noEmit
+npm run build
 ```
 
-For demo data, set `DEMO_MODE=true` and import the demo SQLite file into `MYSQL_DEMO_DATABASE`. For production data, set `DEMO_MODE=false` and import into `MYSQL_DATABASE`. Import is intended for a fresh MySQL destination. It preserves card, visit, admin, and session rows; ephemeral rate-limit counters are intentionally skipped. Duplicate primary/unique keys are ignored. Keep both source files and backups until counts and a staged login/activation/scan flow have been verified. Existing sessions can be invalidated by changing `SESSION_SECRET` or re-seeding an admin.
-
-The old SQLite schema migration is still available as `npm run migrate:sqlite -- /path/to/source.sqlite`; it does not configure or migrate MySQL.
-
-## App behavior and deployment
-
-- Each card has a unique ID and a hashed, one-time activation code. Download the CSV after generation because raw activation codes are shown only once.
-- QR links use `?src=qr`; encode the corresponding `?src=nfc` URL on NFC cards. Active scans record their source and redirect to the configured Google Review destination.
-- MySQL transactions protect activation and batch generation. Rate-limit events are stored in the selected database and shared across app instances using that database.
-- Use a persistent managed MySQL service, TLS, automated backups, and a tested restore procedure. Apply schema migrations before deploying new application versions.
-- Keep demo and production data in separate databases. Do not grant the app access to unrelated schemas.
-
-## Environment variables
-
-See `.env.example`. `.env` contains credentials and must not be committed. Never commit exported card CSVs or activation codes.
-# repiw-nfc
+End-to-end tests need `REPIW_TEST_DATABASE_URL` set to an isolated test database. No Supabase credentials were available in this workspace, so database connection, migration, seed, import, and deployment have not yet been verified.

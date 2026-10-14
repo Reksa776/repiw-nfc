@@ -4,7 +4,7 @@ const config: NextConfig = {
   distDir: process.env.REPIW_NEXT_DIST_DIR || '.next',
   poweredByHeader: false,
   reactStrictMode: true,
-  serverExternalPackages: ['mysql2', 'archiver'],
+  serverExternalPackages: ['pg', 'archiver'],
 };
 
 export default config;

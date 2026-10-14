@@ -1,27 +1,26 @@
-# REPIW V1 · MySQL Migration
+# REPIW · Supabase database migration plan
 
-## Source and target
+## Project baseline
 
-The application began on SQLite and now uses MySQL through `mysql2`. App queries and transaction-sensitive flows are asynchronous. The same card, visit, admin, session, and rate-limit records are represented in MySQL. `MYSQL_DATABASE` is selected when `DEMO_MODE=false`; `MYSQL_DEMO_DATABASE` is selected when it is true.
+`~/repiw-nextjs-project` is the baseline for the current UI and flows. Its bilingual responsive design, login page, loading transitions, dashboard, QR/NFC card flow, analytics, and demo tour are retained. This change replaces the MySQL runtime with Supabase PostgreSQL and does not intentionally redesign those pages.
 
-The UI flows remain: admin sign-in, card metrics and library, unique ID and one-time activation-code generation, QR PNG/ZIP and CSV, QR/NFC attribution, activation, visit tracking, active redirects, demo flow/review, and validation/error responses.
+## Database implementation
 
-## Schema
+- `DATABASE_URL` connects to Supabase using the server-only `pg` package.
+- `npm run db:migrate` applies the versioned initial schema for `cards`, `visits`, `admins`, `sessions`, `rate_events`, `schema_migrations`, and `data_imports`.
+- `npm run db:seed -- <username>` interactively stores an scrypt password hash in `admins` and revokes current sessions.
+- Cards use the existing 0/1 active and demo flags. In Supabase, demo and production rows coexist in one project and dashboard/query/export operations scope by `DEMO_MODE`.
+- Transactions protect activation, generation batches, demo seed/reset, and rate-limit counters. Existing activation validation and redirects remain.
+- `npm run db:import-mysql -- <demo|production>` transfers existing MySQL card and visit data; `mysql2` is development-only for this one-off importer. `npm run db:import-sqlite -- <path>` supports older SQLite files. Both importers remap visits by card code and skip sessions/rate-limit history.
 
-`npm run db:migrate` initializes the selected MySQL schema: `cards`, `visits`, `admins`, `sessions`, `rate_events`, and `schema_migrations`. Tables use InnoDB, utf8mb4, foreign keys, and indexes for dashboard counts and lookups. Run the command once for the production database and once for the demo database by setting `DEMO_MODE` accordingly. The app account must have the privileges described in README.
+## Cutover
 
-## Existing SQLite data
+1. Copy the Supabase PostgreSQL URI from the project's Connect panel into a private `.env` as `DATABASE_URL`.
+2. Run `npm run db:migrate`, then import the existing MySQL sources (or SQLite backups) once, if applicable. Seed with `npm run db:seed -- admin`.
+3. Compare card and visit counts in Supabase Table Editor.
+4. On staging, verify login/logout, generation and CSV, QR PNG/ZIP, inactive activation, active QR/NFC redirects, dashboard counts, demo reset, and mobile layout.
+5. Keep the original database and backups until the new deployment and restoration path are accepted.
 
-1. Stop writes to the source app and take separate backups of production and demo SQLite databases.
-2. For an older SQLite file, first run `npm run migrate:sqlite -- /absolute/path/to/a/copy.sqlite` on a copy. This is the legacy SQLite schema migration and creates a timestamped backup.
-3. Set `DEMO_MODE=false`, initialize MySQL, then run `npm run db:import-sqlite -- /absolute/path/to/production.sqlite`.
-4. Set `DEMO_MODE=true`, initialize the separate demo MySQL database, then import the demo SQLite file.
-5. Compare card/visit/admin counts and verify sign-in, activation, QR/NFC visit recording, exports, and redirects on staging before cutover. Preserve the SQLite originals until the MySQL backup and rollback procedure are verified.
+## Limitation
 
-The importer is intended for an empty destination. It uses `INSERT IGNORE` to make repeated imports idempotent for matching primary/unique keys; do not use it to merge unrelated databases. Existing sessions are imported, but can be safely revoked by changing `SESSION_SECRET` or running `npm run db:seed -- admin`. Legacy unsalted SHA-256 activation digests remain verifiable for the one-time activation and are replaced with scrypt hashes after use.
-
-## Configuration and status
-
-Copy `.env.example` to `.env`; fill in MySQL host, port, username, password, and both database names. Never put real credentials in `.env.example`. `MYSQL_SSL=true` requires a certificate trusted by Node.js. Configure a random `SESSION_SECRET` of at least 32 bytes and HTTPS `BASE_URL` for production.
-
-`npm run build` and TypeScript compilation pass after the MySQL refactor. A live migration, credential check, and end-to-end database verification still require the MySQL connection values and database privileges from the deployment environment. No production-readiness claim is made until those have been verified.
+No Supabase project credentials were supplied. The schema migration, database seed, data import, live login, runtime SQL, and deployment have not been run against a real Supabase project. E2E requires a dedicated `REPIW_TEST_DATABASE_URL`; never use production for those tests. Stop writes to a MySQL source and import once; importing again after new visits have arrived would append those visits again.

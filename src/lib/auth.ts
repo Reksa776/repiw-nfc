@@ -19,7 +19,7 @@ function verifyHash(input: string, encoded: string) {
   return safeEqual(actual, expected);
 }
 export async function authenticateAdmin(username: string, input: string): Promise<Pick<Admin, 'id'|'username'> | null> {
-  const [admin] = await db.query<Admin>('SELECT id,username,password_hash FROM admins WHERE username=? LIMIT 1', [username.trim()]);
+  const [admin] = await db.query<Admin>('SELECT id,username,password_hash FROM admins WHERE LOWER(username)=? LIMIT 1', [username.trim().toLowerCase()]);
   if (!admin || !verifyHash(input, admin.password_hash)) return null;
   return { id: Number(admin.id), username: admin.username };
 }
@@ -28,7 +28,7 @@ export async function ensureDemoAdminId(): Promise<number> {
   const salt = crypto.randomBytes(16).toString('hex');
   const randomPassword = crypto.randomBytes(32).toString('hex');
   const passwordHash = `scrypt$${salt}$${crypto.scryptSync(randomPassword, salt, 64).toString('hex')}`;
-  await db.execute("INSERT IGNORE INTO admins(username,password_hash) VALUES('__demo__',?)", [passwordHash]);
+  await db.execute("INSERT INTO admins(username,password_hash) VALUES('__demo__',?) ON CONFLICT(username) DO NOTHING", [passwordHash]);
   const [row] = await db.query<{id:number|string}>("SELECT id FROM admins WHERE username='__demo__' LIMIT 1");
   if (!row) throw new Error('Could not initialize the demo admin.');
   return Number(row.id);

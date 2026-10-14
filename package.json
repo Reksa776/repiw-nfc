@@ -11,10 +11,11 @@
     "test": "vitest run tests",
     "test:e2e": "playwright test",
     "migrate:sqlite": "node scripts/migrate-sqlite.js",
-    "admin:upsert": "node scripts/admin-account.js",
-    "db:migrate": "node scripts/migrate-mysql.js",
+    "db:migrate": "node scripts/migrate-postgres.js",
     "db:seed": "node scripts/admin-account.js",
-    "db:import-sqlite": "node scripts/migrate-sqlite-to-mysql.js"
+    "db:import-sqlite": "node scripts/migrate-sqlite-to-postgres.js",
+    "db:import-mysql": "node scripts/migrate-mysql-to-postgres.js",
+    "e2e:seed": "node scripts/seed-e2e-admin.js"
   },
   "engines": {
     "node": ">=22.5.0"
@@ -22,8 +23,8 @@
   "dependencies": {
     "archiver": "^7.0.1",
     "dotenv": "^16.4.7",
-    "mysql2": "^3.24.6",
     "next": "^16.0.0",
+    "pg": "^8.23.1",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",
@@ -33,6 +34,8 @@
     "@playwright/test": "^1.55.0",
     "@types/archiver": "^6.0.3",
     "@types/node": "^22.0.0",
+    "@types/pg": "^8.23.1",
+    "mysql2": "^3.24.6",
     "@types/qrcode": "^1.5.5",
     "@types/react": "^19.0.0",
     "@types/react-dom": "^19.0.0",
