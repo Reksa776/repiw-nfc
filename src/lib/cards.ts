@@ -2,6 +2,10 @@ import 'server-only';
 import { db, demo } from './db';
 export async function recordVisit(cardId: number, source: 'qr'|'nfc') {
   await db.execute('INSERT INTO visits(card_id,source) VALUES (?,?)', [cardId, source]);
+  if (source === 'nfc') await markNfcRegistered(cardId);
+}
+export async function markNfcRegistered(cardId: number) {
+  await db.execute('UPDATE cards SET nfc_registered_at=COALESCE(nfc_registered_at,CURRENT_TIMESTAMP) WHERE id=?', [cardId]);
 }
 export async function stats() {
   const [cards] = await db.query<{total:number|string;active:number|string}>(`SELECT COUNT(*) AS total, COALESCE(SUM(CASE WHEN active=1 THEN 1 ELSE 0 END),0) AS active FROM cards WHERE demo=?`,[demo?1:0]);
