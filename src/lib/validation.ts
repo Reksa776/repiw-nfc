@@ -4,7 +4,8 @@ export const loginSchema = z.object({ username: z.string().trim().min(1).max(80)
 export const generateSchema = z.object({ count: z.number().int().min(1).max(100) });
 export const activationSchema = z.object({
   code: z.string().regex(/^RP-[A-F0-9]{10}$/),
-  activationCode: z.string().regex(/^[A-Fa-f0-9]{12}$/),
+  // New cards use four unambiguous Base32 characters; accept already-issued 12-char codes during rollout.
+  activationCode: z.string().regex(/^(?:[A-HJ-NP-Z2-9]{4}|[A-Fa-f0-9]{12})$/i),
   reviewURL: z.string().url().max(2048),
 });
 const reviewHosts = new Set(['g.page','google.com','www.google.com','maps.google.com','maps.app.goo.gl']);

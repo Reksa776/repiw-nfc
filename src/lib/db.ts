@@ -59,4 +59,7 @@ export const safeEqual = (a: string, b: string) => {
   return x.length === y.length && crypto.timingSafeEqual(x, y);
 };
 export function makeCode() { return `RP-${crypto.randomBytes(5).toString('hex').toUpperCase()}`; }
-export function makeActivationCode() { return crypto.randomBytes(6).toString('hex').toUpperCase(); }
+export function makeActivationCode() {
+  const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
+  return Array.from({ length: 4 }, () => alphabet.charAt(crypto.randomInt(alphabet.length))).join('');
+}
