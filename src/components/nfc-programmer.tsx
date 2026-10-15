@@ -11,22 +11,32 @@ export function NfcProgrammer({ cards, onComplete, language }: { cards: Card[]; 
   const id = language === 'id';
   async function program() {
     setBusy(true); setMessage(''); setError(false);
+    let cancelWriteIfNeeded = () => {};
     try {
       if (!code) throw new Error(id ? 'Pilih ID kartu terlebih dahulu.' : 'Select a card ID first.');
-      const prep = await fetch('/api/admin/nfc/register', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ code }) });
-      const prepBody = await prep.json();
-      if (!prep.ok) throw new Error(prepBody.error || 'Could not prepare NFC card.');
+      const targetUrl = new URL(`/c/${encodeURIComponent(code)}?src=nfc`, window.location.origin).toString();
+      setFallbackUrl(targetUrl);
       if (!('NDEFReader' in window)) {
-        setFallbackUrl(prepBody.url);
         setMessage(id ? 'Browser ini tidak menyediakan Web NFC. Salin URL ini ke aplikasi penulis NFC bawaan/native, tulis sebagai record URL, lalu ketuk tag untuk menguji. Database akan menandai kartu saat URL NFC dibuka.' : 'This browser does not expose Web NFC. Copy this URL into a native NFC writer app, write it as a URL record, then tap the tag to test it. The database marks the card when its NFC URL is opened.');
         return;
       }
       const reader = new NDEFReader();
-      await reader.write({ records: [{ recordType: 'url', data: prepBody.url }] });
+      const writeTask = new Promise<void>((resolve, reject) => {
+        const timer = window.setTimeout(() => { cleanup(); reject(new Error(id ? 'Tag belum terdeteksi. Tempelkan tag NDEF kosong ke bagian NFC ponsel, lalu coba lagi.' : 'No tag detected. Hold a blank NDEF tag near the phone NFC area and try again.')); }, 30_000);
+        const cleanup = () => { window.clearTimeout(timer); reader.removeEventListener('reading', onReading); reader.removeEventListener('readingerror', onReadingError); };
+        const onReading = () => { reader.write({ records: [{ recordType: 'url', data: targetUrl }] }).then(() => { cleanup(); resolve(); }, error => { cleanup(); reject(error); }); };
+        const onReadingError = () => { cleanup(); reject(new Error(id ? 'Tag terdeteksi tetapi tidak dapat dibaca. Pastikan tag mendukung NDEF dan tidak terkunci.' : 'Tag detected but could not be read. Make sure it supports NDEF and is not locked.')); };
+        cancelWriteIfNeeded = cleanup;
+        reader.addEventListener('reading', onReading, { once: true });
+        reader.addEventListener('readingerror', onReadingError, { once: true });
+      });
+      await reader.scan();
+      setMessage(id ? 'NFC siap. Tempelkan tag kosong ke bagian belakang ponsel…' : 'NFC is ready. Hold a blank tag near the back of your phone…');
+      await writeTask;
       await onComplete();
       setFallbackUrl('');
       setMessage(id ? `Kartu ${code} berhasil diprogram. Tempelkan lagi ke ponsel untuk menguji URL dan menyelesaikan pendaftaran.` : `Card ${code} is programmed. Tap it again to verify the URL and complete registration.`);
-    } catch (e) { setError(true); setMessage(e instanceof Error ? e.message : (id ? 'Pemrograman NFC gagal.' : 'NFC programming failed.')); }
+    } catch (e) { cancelWriteIfNeeded(); setError(true); setMessage(e instanceof Error ? `${e.message}${id ? ' URL cadangan tersedia di bawah.' : ' A fallback URL is available below.'}` : (id ? 'Pemrograman NFC gagal.' : 'NFC programming failed.')); }
     finally { setBusy(false); }
   }
   async function copyUrl() {
