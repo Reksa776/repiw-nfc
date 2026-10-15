@@ -35,6 +35,7 @@ The project uses the server-side `pg` driver and `DATABASE_URL`; it does not use
 - `/api/admin/generate`: unique card IDs and one-time activation codes; QR PNG/ZIP and CSV export.
 - Dashboard → **Cards** → **Program an NFC card**: choose a generated card. Android Chrome can write directly to a writable NDEF tag over HTTPS. Other phones get the card's NFC URL to paste into a native NFC writer app. The database marks the card as detected when the tag URL is first opened; browsers cannot read the tag's hardware UID.
 - `/api/activate`: validates and consumes a one-time activation code.
+- Activation codes come from the generated card batch CSV and should be printed with the physical card. After activation, the business review link is shown as a direct button. Customers choose their own genuine rating on Google; the app does not preselect or submit a five-star review.
 
 Download the generated CSV right away. Codes appear once; the database stores only hashes. Put the `?src=qr` URL in the QR code and the matching `?src=nfc` URL on the NFC chip.
 

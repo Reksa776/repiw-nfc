@@ -21,5 +21,5 @@ export async function POST(req:NextRequest) {
   if(outcome==='missing')return jsonError('Kartu tidak ditemukan.',404);
   if(outcome==='active')return jsonError('Kartu sudah aktif.',409);
   if(outcome==='secret')return jsonError('Kode aktivasi salah.',401);
-  return NextResponse.json({ok:true});
+  return NextResponse.json({ok:true,reviewURL});
 }
