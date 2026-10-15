@@ -10,7 +10,7 @@ export async function stats() {
   return { total, active, inactive:total-active, nfc:Number(events.find(v=>v.source==='nfc')?.n||0), qr:Number(events.find(v=>v.source==='qr')?.n||0) };
 }
 export async function listCards() {
-  return db.query(`SELECT c.code,c.active,c.demo,TO_CHAR(c.activated_at,'YYYY-MM-DD HH24:MI:SS') AS activated_at,TO_CHAR(c.created_at,'YYYY-MM-DD HH24:MI:SS') AS created_at,
+  return db.query(`SELECT c.code,c.active,c.demo,c.nfc_registered_at,TO_CHAR(c.activated_at,'YYYY-MM-DD HH24:MI:SS') AS activated_at,TO_CHAR(c.created_at,'YYYY-MM-DD HH24:MI:SS') AS created_at,
     (SELECT COUNT(*) FROM visits v WHERE v.card_id=c.id AND v.source='nfc') AS nfc,
     (SELECT COUNT(*) FROM visits v WHERE v.card_id=c.id AND v.source='qr') AS qr
     FROM cards c WHERE c.demo=? ORDER BY c.id DESC LIMIT 500`,[demo?1:0]);

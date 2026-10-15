@@ -28,6 +28,9 @@ const migrations=[
  ]},
  {name:'normalize_card_flags',sql:[
   `DO $migration$ DECLARE flag_type TEXT; BEGIN SELECT data_type INTO flag_type FROM information_schema.columns WHERE table_schema=current_schema() AND table_name='cards' AND column_name='active'; IF flag_type='boolean' THEN ALTER TABLE cards ALTER COLUMN active DROP DEFAULT; ALTER TABLE cards ALTER COLUMN active TYPE SMALLINT USING CASE WHEN active THEN 1 ELSE 0 END; ALTER TABLE cards ALTER COLUMN active SET DEFAULT 0; END IF; END $migration$`
+ ]},
+ {name:'track_nfc_card_programming',sql:[
+  `ALTER TABLE cards ADD COLUMN IF NOT EXISTS nfc_registered_at TIMESTAMP`
  ]}
 ];
 (async()=>{

@@ -18,7 +18,7 @@ REPIW manages Google Review NFC/QR cards, one-time activation codes, scan tracki
 
 The seed asks for the admin password twice without displaying it; use at least 8 characters. Open `http://localhost:3000/admin` and sign in as `admin`. To use a different username, pass it after `--`, for example `npm run db:seed -- reksa`.
 
-`npm run db:migrate` is versioned and safe to rerun. It upgrades older Supabase schemas by adding the admin reference to `sessions` and normalizing a legacy boolean `cards.active` column to the integer format the app uses. Existing sessions without an admin link are cleared, so sign in again after that upgrade. Admin accounts all have the same dashboard access; this app does not apply per-role feature restrictions.
+`npm run db:migrate` is versioned and safe to rerun. It upgrades older Supabase schemas by adding the admin reference to `sessions`, normalizing a legacy boolean `cards.active` column, and adding NFC registration timestamps. Existing sessions without an admin link are cleared, so sign in again after that upgrade. Admin accounts all have the same dashboard access; this app does not apply per-role feature restrictions.
 
 ## View data
 
@@ -33,6 +33,7 @@ The project uses the server-side `pg` driver and `DATABASE_URL`; it does not use
 - `/flow-preview` (`/demo`): interactive admin, buyer, customer, analytics, and error walkthrough.
 - `/c/RP-...?src=qr` or `?src=nfc`: activation for inactive cards; active cards record the source and redirect. Demo cards open `/demo-review`.
 - `/api/admin/generate`: unique card IDs and one-time activation codes; QR PNG/ZIP and CSV export.
+- Dashboard → **Cards** → **Program an NFC card**: choose a generated card and tap a writable NFC tag to the Android phone running Chrome. The app writes that card's NFC URL and records registration time. This needs HTTPS, NFC-enabled Android, and a writable NDEF tag; it does not read a tag's hardware UID.
 - `/api/activate`: validates and consumes a one-time activation code.
 
 Download the generated CSV right away. Codes appear once; the database stores only hashes. Put the `?src=qr` URL in the QR code and the matching `?src=nfc` URL on the NFC chip.
