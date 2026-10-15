@@ -1,6 +1,6 @@
 import { NextRequest,NextResponse } from 'next/server';
 import { db,makeActivationCode,makeCode,transaction,demo } from '@/lib/db';
-import { hashActivationCode } from '@/lib/security';
+import { encryptActivationCode,hashActivationCode } from '@/lib/security';
 import { generateSchema,safeBaseURL } from '@/lib/validation';
 import { requireAdmin,jsonError,sameOrigin } from '@/lib/http';
 export const runtime='nodejs';
@@ -16,7 +16,7 @@ export async function POST(req:NextRequest) {
       for(let i=0;i<parsed.data.count;i++) {
         let code=makeCode(), secret=makeActivationCode(), attempts=0;
         while(true) {
-          const inserted=await tx.query<{id:number|string}>('INSERT INTO cards(code,secret_hash,demo) VALUES(?,?,?) ON CONFLICT(code) DO NOTHING RETURNING id',[code,hashActivationCode(secret),demo?1:0]);
+          const inserted=await tx.query<{id:number|string}>('INSERT INTO cards(code,secret_hash,demo,activation_code_encrypted) VALUES(?,?,?,?) ON CONFLICT(code) DO NOTHING RETURNING id',[code,hashActivationCode(secret),demo?1:0,encryptActivationCode(secret)]);
           if(inserted.length)break;
           if(++attempts>4)throw new Error('Could not allocate a unique card ID.');
           code=makeCode();

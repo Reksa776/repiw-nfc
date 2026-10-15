@@ -31,6 +31,9 @@ const migrations=[
  ]},
  {name:'track_nfc_card_programming',sql:[
   `ALTER TABLE cards ADD COLUMN IF NOT EXISTS nfc_registered_at TIMESTAMP`
+ ]},
+ {name:'retain_encrypted_activation_codes',sql:[
+  `ALTER TABLE cards ADD COLUMN IF NOT EXISTS activation_code_encrypted TEXT`
  ]}
 ];
 (async()=>{

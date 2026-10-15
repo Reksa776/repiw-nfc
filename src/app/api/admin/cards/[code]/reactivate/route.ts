@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from 'next/server';
 import { db, demo, makeActivationCode, transaction } from '@/lib/db';
-import { hashActivationCode } from '@/lib/security';
+import { encryptActivationCode,hashActivationCode } from '@/lib/security';
 import { requireAdmin, jsonError, sameOrigin } from '@/lib/http';
 import { safeBaseURL } from '@/lib/validation';
 export const runtime = 'nodejs', dynamic = 'force-dynamic';
@@ -17,7 +17,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
     const [card] = await tx.query<{ id: number | string; active: number }>('SELECT id,active FROM cards WHERE code=? AND demo=? FOR UPDATE', [code, demo ? 1 : 0]);
     if (!card) return 'missing' as const;
     if (!card.active) return 'inactive' as const;
-    await tx.execute('UPDATE cards SET active=0,review_url=NULL,activated_at=NULL,secret_hash=? WHERE id=?', [hashActivationCode(activationCode), card.id]);
+    await tx.execute('UPDATE cards SET active=0,review_url=NULL,activated_at=NULL,secret_hash=?,activation_code_encrypted=? WHERE id=?', [hashActivationCode(activationCode), encryptActivationCode(activationCode), card.id]);
     return 'ok' as const;
   });
   if (result === 'missing') return jsonError('Kartu tidak ditemukan.', 404);

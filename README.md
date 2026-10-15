@@ -37,8 +37,9 @@ The project uses the server-side `pg` driver and `DATABASE_URL`; it does not use
 - Dashboard → **Cards** → **Program an NFC card**: choose a generated card. Android Chrome can write directly to a writable NDEF tag over HTTPS. Other phones get the card's NFC URL to paste into a native NFC writer app. The database marks the card as detected when the tag URL is first opened; browsers cannot read the tag's hardware UID.
 - `/api/activate`: validates and consumes a one-time activation code.
 - Activation codes come from the generated card batch CSV and should be printed with the physical card. After activation, the business review link is shown as a direct button. Customers choose their own genuine rating on Google; the app does not preselect or submit a five-star review.
+- The admin card table shows codes for inactive cards after refresh. They are encrypted in the database and are removed when activated. Configure a stable `ACTIVATION_CODE_ENCRYPTION_KEY` in `.env` (32+ random bytes); if unset, `SESSION_SECRET` is used. Existing inactive cards created before this feature only have hashes; use **Issue code** to replace their old code before printing/activating. Active cards have no retrievable activation code.
 
-Download the generated CSV right away. Codes appear once; the database stores only hashes. Put the `?src=qr` URL in the QR code and the matching `?src=nfc` URL on the NFC chip.
+Download the generated CSV right away. The table can show inactive-card codes after refresh; at rest they are encrypted alongside the verification hash and are cleared on activation. Put the `?src=qr` URL in the QR code and the matching `?src=nfc` URL on the NFC chip.
 
 ## Import existing MySQL or SQLite data
 
