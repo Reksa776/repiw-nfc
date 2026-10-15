@@ -10,7 +10,12 @@ export const activationSchema = z.object({
 });
 const reviewHosts = new Set(['g.page','google.com','www.google.com','maps.google.com','maps.app.goo.gl']);
 export function validReviewURL(value: string) {
-  try { const url = new URL(value); return url.protocol === 'https:' && reviewHosts.has(url.hostname) && !url.username && !url.password; }
+  try {
+    const url = new URL(value);
+    if (url.protocol !== 'https:' || url.username || url.password) return false;
+    if (url.hostname === 'search.google.com') return url.pathname === '/local/writereview' && Boolean(url.searchParams.get('placeid'));
+    return reviewHosts.has(url.hostname);
+  }
   catch { return false; }
 }
 export function safeBaseURL() {

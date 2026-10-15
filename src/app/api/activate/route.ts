@@ -4,6 +4,36 @@ import { jsonError,enforceRateLimit,sameOrigin } from '@/lib/http';
 import { db,sha256,transaction } from '@/lib/db';
 import { verifyActivationCode } from '@/lib/security';
 export const runtime='nodejs';
+const GOOGLE_HOSTS=new Set(['g.page','google.com','www.google.com','maps.google.com','maps.app.goo.gl','search.google.com']);
+function linkKind(value:string):'review'|'maps-place'|'maps-short'|'google-other'{
+  const u=new URL(value);
+  if(u.hostname==='search.google.com'&&u.pathname==='/local/writereview'&&u.searchParams.has('placeid'))return 'review';
+  if(u.hostname==='g.page'&&/\/review\/?$/i.test(u.pathname))return 'review';
+  if(u.hostname==='maps.app.goo.gl')return 'maps-short';
+  if(u.hostname==='g.page'||u.hostname==='maps.google.com'||u.pathname.startsWith('/maps/'))return 'maps-place';
+  return 'google-other';
+}
+export async function GET(req:NextRequest){
+  if(!sameOrigin(req))return jsonError('Permintaan lintas situs ditolak.',403);
+  const limited=await enforceRateLimit(req,'review-link-inspect',20,15*60_000);if(limited)return limited;
+  const raw=req.nextUrl.searchParams.get('inspectURL');
+  if(!raw||raw.length>2048||!validReviewURL(raw))return jsonError('Masukkan tautan Google HTTPS yang valid.',400);
+  const initial=new URL(raw);
+  if(initial.port&&initial.port!=='443')return jsonError('Tautan harus memakai port HTTPS standar.',400);
+  let current=initial,resolved=false;
+  try{
+    for(let hop=0;hop<6;hop++){
+      const response=await fetch(current,{method:'GET',redirect:'manual',signal:AbortSignal.timeout(3500),headers:{'User-Agent':'REPIW-Link-Inspector/1.0','Range':'bytes=0-0'}});
+      if(response.status<300||response.status>=400){await response.body?.cancel();break;}
+      const location=response.headers.get('location');if(!location){await response.body?.cancel();break;}
+      const next=new URL(location,current);
+      await response.body?.cancel();
+      if(next.protocol!=='https:'||next.username||next.password||(next.port&&next.port!=='443')||!GOOGLE_HOSTS.has(next.hostname))break;
+      current=next;resolved=true;
+    }
+  }catch{/* Google may block automated requests; the UI reports that resolution was inconclusive. */}
+  return NextResponse.json({ok:true,kind:linkKind(current.href),finalURL:current.href,resolved},{headers:{'Cache-Control':'no-store'}});
+}
 export async function POST(req:NextRequest) {
   if(!sameOrigin(req)) return jsonError('Permintaan lintas situs ditolak.',403);
   const limited=await enforceRateLimit(req,'activation',12,15*60_000); if(limited)return limited;
