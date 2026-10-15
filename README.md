@@ -33,6 +33,7 @@ The project uses the server-side `pg` driver and `DATABASE_URL`; it does not use
 - `/flow-preview` (`/demo`): interactive admin, buyer, customer, analytics, and error walkthrough.
 - `/c/RP-...?src=qr` or `?src=nfc`: activation for inactive cards; active cards record the source and redirect. Demo cards open `/demo-review`.
 - `/api/admin/generate`: unique card IDs and one-time activation codes; QR PNG/ZIP and CSV export.
+- In the admin card list, **Reactivate** rotates the activation code and returns the card to inactive status; save the new code CSV because it is shown once. **Delete** removes the card and its visits, so its QR/NFC URL stops working. Deleting a database record does not erase the physical NFC tag; overwrite it separately if reusing it.
 - Dashboard → **Cards** → **Program an NFC card**: choose a generated card. Android Chrome can write directly to a writable NDEF tag over HTTPS. Other phones get the card's NFC URL to paste into a native NFC writer app. The database marks the card as detected when the tag URL is first opened; browsers cannot read the tag's hardware UID.
 - `/api/activate`: validates and consumes a one-time activation code.
 - Activation codes come from the generated card batch CSV and should be printed with the physical card. After activation, the business review link is shown as a direct button. Customers choose their own genuine rating on Google; the app does not preselect or submit a five-star review.
