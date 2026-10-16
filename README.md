@@ -20,6 +20,12 @@ The seed asks for the admin password twice without displaying it; use at least 8
 
 `npm run db:migrate` is versioned and safe to rerun. It upgrades older Supabase schemas by adding the admin reference to `sessions`, normalizing a legacy boolean `cards.active` column, and adding NFC registration timestamps. Existing sessions without an admin link are cleared, so sign in again after that upgrade. Admin accounts all have the same dashboard access; this app does not apply per-role feature restrictions.
 
+## Google business search and review-link generation
+
+The activation form has one smart field: paste a direct Google review/Maps URL to validate it, or type a business name and choose the matching Google Maps result. Choosing a result fills the field with Google's direct `writeAReviewUri`, which is then saved for the card and used for QR/NFC.
+
+Business-name search is optional. To enable it, create a Google Maps Platform project, enable **Places API (New)**, enable billing, create an API key, and set `GOOGLE_MAPS_API_KEY` in the server `.env`. Restrict that key to Places API (New) and keep it server-side; never add a `NEXT_PUBLIC_` prefix. Google bills Places requests according to the fields and usage, so monitor quota and billing. Without this key, directly pasted Google review links still work; name search returns a setup message. A generic Maps place/share URL is not always itself a review-form URL.
+
 ## View data
 
 Open **Table Editor** in the Supabase dashboard. The migration creates `cards`, `visits`, `admins`, `sessions`, `rate_events`, `schema_migrations`, and `data_imports` in `public`. Demo and production cards share the database but are separated by the `demo` field; dashboard data and QR export follow `DEMO_MODE`. Use separate Supabase projects if you need stronger isolation.

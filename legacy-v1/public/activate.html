@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Aktivasi Kartu Repiw</title>
+<style>
+  :root{--brand:#3156d3;--ink:#17223b;--muted:#697386;--line:#e6eaf2;--ok:#12845b;--danger:#c0392b}
+  *{box-sizing:border-box}
+  body{margin:0;font:16px Inter,system-ui,Segoe UI,Arial,sans-serif;background:radial-gradient(900px 500px at 70% -10%,#e6ecff,#f6f7fb 60%);color:var(--ink);min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px}
+  .card{max-width:460px;width:100%;background:#fff;padding:32px;border-radius:22px;box-shadow:0 20px 50px #1c2a4b18}
+  .brand{font-size:22px;font-weight:800;color:var(--brand)}
+  h1{font-size:28px;margin:6px 0 4px}
+  p{color:var(--muted);line-height:1.5}
+  label{display:block;margin-top:18px;font-weight:700;font-size:13.5px}
+  input{width:100%;box-sizing:border-box;padding:13px;border-radius:11px;font:inherit;margin-top:6px;border:1px solid #ccd4e1;background:#fff;color:var(--ink)}
+  input[readonly]{background:#f3f5fa;color:var(--muted)}
+  button{width:100%;border:0;background:var(--brand);color:#fff;font-weight:700;padding:14px;border-radius:11px;font:inherit;margin-top:24px;cursor:pointer}
+  button:hover{background:#2743a8}
+  #message{margin-top:16px;font-weight:600;font-size:14px}
+  #message.ok{color:var(--ok)}#message.err{color:var(--danger)}
+  .hint{margin-top:18px;font-size:12.5px;color:var(--muted);border-top:1px dashed var(--line);padding-top:14px}
+</style>
+</head>
+<body>
+  <div class="card">
+    <div class="brand">repiw.</div>
+    <h1>Aktivasi kartu</h1>
+    <p>Aktivasi cukup satu kali. Setelah aktif, pelanggan yang tap/scan kartu akan langsung diarahkan ke halaman Google Review bisnis Anda.</p>
+    <form id="form">
+      <label>Card ID<input id="code" readonly></label>
+      <label>Kode aktivasi<input id="secret" required autocomplete="off" placeholder="Masukkan kode rahasia dari kemasan"></label>
+      <label>Link Google Review<input id="url" type="url" placeholder="https://g.page/r/.../review" required></label>
+      <button>Aktifkan Kartu</button>
+    </form>
+    <p id="message" role="status"></p>
+    <div class="hint">Kode aktivasi diberikan secara privat bersama kartu. Bila kode salah atau link tidak valid, sistem menolak aktivasi.</div>
+  </div>
+<script>
+  const code = decodeURIComponent(location.pathname.split('/').pop());
+  document.getElementById('code').value = code;
+  document.getElementById('form').onsubmit = async (e) => {
+    e.preventDefault();
+    const msg = document.getElementById('message');
+    msg.className = ''; msg.textContent = 'Memproses…';
+    try {
+      const r = await fetch('/api/activate', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code, activationCode: document.getElementById('secret').value, reviewURL: document.getElementById('url').value }),
+      });
+      const d = await r.json().catch(() => ({}));
+      if (r.ok) { msg.className = 'ok'; msg.textContent = '✓ Kartu aktif! Silakan tap atau scan ulang kartu untuk menguji.'; document.getElementById('form').reset(); document.getElementById('code').value = code; }
+      else { msg.className = 'err'; msg.textContent = '✗ ' + (d.error || 'Aktivasi gagal'); }
+    } catch { msg.className = 'err'; msg.textContent = '✗ Tidak dapat menghubungi server.'; }
+  };
+</script>
+</body>
+</html>

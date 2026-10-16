@@ -1,0 +1,99 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Simulasi Google Review - Repiw Demo</title>
+<style>
+  :root{--brand:#3156d3;--navy:#121c34;--ok:#12845b;--warn:#a46816;--line:#e6eaf2;--muted:#6b7487}
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;background:#eef1f7;color:#17223b;min-height:100vh;display:flex;flex-direction:column;align-items:center;padding:24px}
+  .demo-banner{width:100%;max-width:680px;background:#fff7e6;border:1px solid #f2d18a;color:#8a5a00;border-radius:12px;padding:10px 14px;font-size:13px;margin-bottom:16px;text-align:center}
+  .demo-banner b{color:#6b4400}
+  .gcard{width:100%;max-width:680px;background:#fff;border-radius:18px;box-shadow:0 12px 40px #1c2a4b1a;overflow:hidden}
+  .ghead{padding:22px 26px;border-bottom:1px solid var(--line);display:flex;align-items:center;gap:14px}
+  .logo{width:44px;height:44px;border-radius:50%;background:conic-gradient(from 0deg,#4285F4,#34A853,#FBBC05,#EA4335,#4285F4);display:grid;place-items:center;color:#fff;font-weight:800;font-size:20px}
+  .ghead h1{font-size:20px;margin:0}
+  .ghead p{margin:2px 0 0;color:var(--muted);font-size:13px}
+  .gbody{padding:26px}
+  .chip{display:inline-flex;align-items:center;gap:7px;background:#eef2ff;color:var(--brand);font-weight:700;font-size:12px;padding:6px 12px;border-radius:999px}
+  .stars{font-size:40px;letter-spacing:6px;color:#fbbc05;margin:18px 0 6px}
+  .stars span{color:#d7dcea}
+  .rating{color:var(--muted);font-size:13px;margin-bottom:18px}
+  textarea{width:100%;min-height:96px;border:1px solid #ccd4e1;border-radius:12px;padding:13px;font:inherit;resize:vertical}
+  .row{display:flex;gap:10px;flex-wrap:wrap;margin-top:16px;align-items:center}
+  button,.btn{border:0;border-radius:10px;padding:12px 18px;font:inherit;font-weight:700;cursor:pointer;text-decoration:none;display:inline-block}
+  .primary{background:var(--brand);color:#fff}
+  .ghost{background:#eef1f7;color:#17223b}
+  .disabled{opacity:.5;pointer-events:none}
+  .meta{margin-top:20px;border-top:1px dashed var(--line);padding-top:16px;font-size:12.5px;color:var(--muted);display:grid;gap:6px}
+  .meta code{background:#f2f5fb;padding:2px 6px;border-radius:6px;color:#3156d3}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%);background:var(--navy);color:#fff;padding:12px 18px;border-radius:10px;font-size:14px;opacity:0;transition:.3s;pointer-events:none}
+  .toast.show{opacity:1}
+</style>
+</head>
+<body>
+  <div class="demo-banner">MODE DEMO / PREVIEW — kunjungan <b>tidak</b> dikirim ke Google. Ini halaman simulasi agar pengujian tidak membuka website eksternal.</div>
+  <div class="gcard">
+    <div class="ghead">
+      <div class="logo">G</div>
+      <div>
+        <h1>Beri ulasan</h1>
+        <p id="biz">Repiw Demo Business</p>
+      </div>
+    </div>
+    <div class="gbody">
+      <span class="chip" id="sourceChip">📷 QR Scan</span>
+      <div class="stars" id="stars">★★★★★</div>
+      <div class="rating" id="ratingText">Pilih rating bintang</div>
+      <textarea id="text" placeholder="Tulis ulasan Anda di sini (simulasi)..."></textarea>
+      <div class="row">
+        <button class="primary" id="submit">Kirim ulasan (simulasi)</button>
+        <a class="btn ghost" href="#" id="realLink">Buka link Google Review asli</a>
+      </div>
+      <div class="meta">
+        <div>Kartu: <code id="cardCode">RP-XXXXX</code></div>
+        <div>Sumber kunjungan: <b id="srcText">qr</b> — sudah tercatat di database Repiw.</div>
+        <div>Catatan: angka kunjungan di dashboard = membuka tautan kartu, <b>bukan</b> jumlah review Google yang benar-benar terkirim.</div>
+      </div>
+    </div>
+  </div>
+  <div class="toast" id="toast">Ulasan simulasi terkirim. Tidak ada data asli yang dikirim.</div>
+
+<script>
+  const params = new URLSearchParams(location.search);
+  const card = params.get('card') || 'RP-DEMO';
+  const src = params.get('src') === 'nfc' ? 'nfc' : 'qr';
+  document.getElementById('cardCode').textContent = card;
+  document.getElementById('srcText').textContent = src;
+  document.getElementById('sourceChip').textContent = src === 'nfc' ? '📶 NFC Tap' : '📷 QR Scan';
+
+  let rating = 0;
+  const stars = document.getElementById('stars');
+  for (let i = 1; i <= 5; i++) {
+    const s = document.createElement('span');
+    s.textContent = '★';
+    s.style.cursor = 'pointer';
+    s.onclick = () => { rating = i; paint(); };
+    s.onmouseenter = () => paint(i);
+    s.onmouseleave = () => paint();
+    stars.append(s);
+  }
+  function paint(hover) {
+    const n = hover ?? rating;
+    [...stars.children].forEach((s, i) => (s.style.color = i < n ? '#fbbc05' : '#d7dcea'));
+    document.getElementById('ratingText').textContent = rating ? rating + ' dari 5 bintang' : 'Pilih rating bintang';
+  }
+
+  document.getElementById('submit').onclick = () => {
+    const t = document.getElementById('toast');
+    t.classList.add('show');
+    setTimeout(() => t.classList.remove('show'), 2600);
+  };
+  document.getElementById('realLink').onclick = (e) => {
+    e.preventDefault();
+    alert('Di mode demo, tautan eksternal tidak dibuka. Set DEMO_MODE=false untuk mengarahkan ke Google Review sungguhan.');
+  };
+</script>
+</body>
+</html>
