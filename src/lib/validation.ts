@@ -7,6 +7,8 @@ export const activationSchema = z.object({
   // New cards use four unambiguous Base32 characters; accept already-issued 12-char codes during rollout.
   activationCode: z.string().regex(/^(?:[A-HJ-NP-Z2-9]{4}|[A-Fa-f0-9]{12})$/i),
   reviewURL: z.string().url().max(2048),
+  // Opaque token of a completed resolution job whose verified review URL is being submitted.
+  resolutionJobToken: z.string().regex(/^[A-Za-z0-9_-]{20,64}$/).optional(),
 });
 const reviewHosts = new Set(['g.page','google.com','www.google.com','maps.google.com','maps.app.goo.gl']);
 export function validReviewURL(value: string) {

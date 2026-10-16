@@ -1,0 +1,349 @@
+<!doctype html>
+<html lang="id">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Repiw Admin</title>
+<style>
+  :root{
+    --brand:#3156d3;--brand-dark:#2743a8;--navy:#0f1830;--bg:#f4f6fb;--card:#fff;
+    --ink:#17223b;--muted:#697386;--line:#e6eaf2;--ok:#12845b;--warn:#b06a00;--danger:#c0392b;
+    --ok-bg:#e7f6ef;--warn-bg:#fdf3e3;--danger-bg:#fdecea;--brand-bg:#eef2ff;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;font-family:Inter,system-ui,Segoe UI,Arial,sans-serif;background:var(--bg);color:var(--ink)}
+  .layout{display:flex;min-height:100vh}
+  /* sidebar */
+  .sidebar{width:248px;flex:0 0 248px;background:var(--navy);color:#cdd6ee;padding:20px 14px;display:flex;flex-direction:column;gap:6px;position:sticky;top:0;height:100vh}
+  .sidebar .logo{font-size:24px;font-weight:800;color:#fff;letter-spacing:-.5px;padding:6px 12px 20px}
+  .sidebar .logo span{color:#8da5ff}
+  .navlink{display:flex;align-items:center;gap:11px;padding:11px 13px;border-radius:11px;color:#b9c4e0;text-decoration:none;font-weight:600;font-size:14.5px;cursor:pointer;border:0;background:transparent;width:100%;text-align:left}
+  .navlink:hover{background:#1a2650;color:#fff}
+  .navlink.active{background:var(--brand);color:#fff}
+  .navlink .ic{width:20px;text-align:center}
+  .sidebar .spacer{flex:1}
+  .sidebar .foot{font-size:11.5px;color:#68739a;padding:10px 12px;border-top:1px solid #202c50}
+  .burger{display:none;background:#1a2650;color:#fff;border:0;border-radius:10px;padding:10px 13px;font-size:18px;cursor:pointer}
+  /* main */
+  .main{flex:1;min-width:0;display:flex;flex-direction:column}
+  .topbar{background:#fff;border-bottom:1px solid var(--line);padding:14px 26px;display:flex;align-items:center;gap:14px;position:sticky;top:0;z-index:15}
+  .topbar h1{font-size:19px;margin:0}
+  .topbar .sub{color:var(--muted);font-size:12.5px;margin-top:2px}
+  .topbar .right{margin-left:auto;display:flex;gap:10px;align-items:center}
+  .content{padding:24px 26px 60px;max-width:1180px;width:100%}
+  .view{display:none}
+  .view.active{display:block}
+  h2.section{font-size:17px;margin:0 0 4px}
+  .panel{background:var(--card);border:1px solid var(--line);border-radius:16px;padding:20px;margin:16px 0;box-shadow:0 6px 24px #1c2a4b0a}
+  .stats{display:grid;grid-template-columns:repeat(auto-fit,minmax(160px,1fr));gap:14px}
+  .stat{background:linear-gradient(180deg,#f7f9fe,#eef2fb);border:1px solid var(--line);border-radius:14px;padding:16px}
+  .stat .lbl{font-size:12px;color:var(--muted);font-weight:700;text-transform:uppercase;letter-spacing:.4px;display:flex;gap:7px;align-items:center}
+  .stat strong{display:block;font-size:30px;margin-top:8px}
+  button,.btn{font:inherit;font-weight:700;border:0;border-radius:10px;padding:11px 16px;cursor:pointer;text-decoration:none;display:inline-block}
+  button:disabled{opacity:.5;cursor:not-allowed}
+  .primary{background:var(--brand);color:#fff}.primary:hover:not(:disabled){background:var(--brand-dark)}
+  .secondary{background:#e9edfa;color:var(--ink)}.secondary:hover{background:#dde4f6}
+  input,select{font:inherit;padding:11px 13px;border:1px solid #ccd4e1;border-radius:10px;background:#fff;color:var(--ink)}
+  .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center;margin:12px 0}
+  .muted{color:var(--muted);font-size:13px}
+  table{width:100%;border-collapse:collapse}
+  td,th{padding:11px 12px;border-bottom:1px solid #edf0f5;text-align:left;font-size:13.5px;white-space:nowrap}
+  th{color:var(--muted);font-size:11.5px;text-transform:uppercase;letter-spacing:.4px}
+  .scroll{overflow:auto;border:1px solid var(--line);border-radius:12px}
+  .tag{font-size:11.5px;font-weight:800;padding:3px 9px;border-radius:999px}
+  .tag.active{background:var(--ok-bg);color:var(--ok)}
+  .tag.inactive{background:var(--warn-bg);color:var(--warn)}
+  .tag.demo{background:var(--brand-bg);color:var(--brand)}
+  .note{border-radius:12px;padding:12px 14px;font-size:13.5px;margin:12px 0;border:1px solid}
+  .note.info{background:var(--brand-bg);border-color:#d5ddfb;color:#2a3d85}
+  .note.warn{background:var(--warn-bg);border-color:#f0d9ac;color:#7a5000}
+  .note.ok{background:var(--ok-bg);border-color:#bfe6d3;color:#0d6344}
+  pre.log{background:#0e1626;color:#c9d6f0;border-radius:12px;padding:14px;font-size:12.5px;max-height:220px;overflow:auto;white-space:pre-wrap;margin:10px 0 0}
+  .mono{font-family:ui-monospace,SFMono-Regular,Menlo,monospace}
+  .hidden{display:none!important}
+  iframe{border:0;width:100%;height:70vh;border-radius:12px;background:#fff}
+  .loginwrap{min-height:100vh;display:grid;place-items:center;padding:20px}
+  .loginbox{background:#fff;border:1px solid var(--line);border-radius:20px;padding:34px;max-width:420px;width:100%;box-shadow:0 20px 50px #1c2a4b14}
+  .loginbox h1{font-size:30px;margin:0 0 2px}
+  .toast{position:fixed;bottom:22px;left:50%;transform:translateX(-50%) translateY(20px);background:var(--navy);color:#fff;padding:12px 18px;border-radius:10px;font-size:14px;opacity:0;transition:.25s;pointer-events:none;z-index:60}
+  .toast.show{opacity:1;transform:translateX(-50%) translateY(0)}
+  @media(max-width:860px){
+    .sidebar{position:fixed;z-index:40;transform:translateX(-100%);transition:.25s;height:100vh}
+    .sidebar.open{transform:none}
+    .burger{display:inline-block}
+    .content{padding:18px 16px 60px}
+    .topbar{padding:12px 16px}
+    iframe{height:60vh}
+  }
+</style>
+</head>
+<body>
+
+<!-- LOGIN -->
+<div class="loginwrap" id="login">
+  <div class="loginbox">
+    <div style="font-size:22px;font-weight:800;color:var(--brand)">repiw.</div>
+    <h1>Admin Login</h1>
+    <p class="muted">Masukkan password admin Repiw. Untuk demo lokal: <b>repiw-demo</b>.</p>
+    <form id="loginForm" class="row" style="flex-direction:column;align-items:stretch">
+      <input id="password" type="password" required placeholder="Password admin" autocomplete="current-password">
+      <button class="primary" style="width:100%">Masuk</button>
+    </form>
+    <p id="loginError" class="muted" style="color:var(--danger)"></p>
+  </div>
+</div>
+
+<!-- APP -->
+<div class="layout hidden" id="app">
+  <aside class="sidebar" id="sidebar">
+    <div class="logo">repiw<span>.</span></div>
+    <button class="navlink active" data-view="dashboard"><span class="ic">▦</span> Dashboard</button>
+    <button class="navlink" data-view="cards"><span class="ic">▤</span> Cards</button>
+    <button class="navlink" data-view="flow"><span class="ic">⇄</span> Flow Preview</button>
+    <button class="navlink" data-view="settings"><span class="ic">⚙</span> Settings</button>
+    <div class="spacer"></div>
+    <div class="foot">REPIW V1 · <span id="modeFoot">demo</span></div>
+  </aside>
+
+  <div class="main">
+    <div class="topbar">
+      <button class="burger" id="burger">☰</button>
+      <div>
+        <h1 id="viewTitle">Dashboard</h1>
+        <div class="sub" id="viewSub">Ringkasan produksi, aktivasi, dan kunjungan kartu</div>
+      </div>
+      <div class="right">
+        <a class="btn secondary" href="/flow-preview" target="_blank">Flow Preview</a>
+        <button class="secondary" id="logout">Keluar</button>
+      </div>
+    </div>
+
+    <div class="content">
+      <!-- DASHBOARD -->
+      <div class="view active" id="view-dashboard">
+        <div class="stats">
+          <div class="stat"><div class="lbl">▦ Total Cards</div><strong id="total">0</strong></div>
+          <div class="stat"><div class="lbl">✓ Activated Cards</div><strong id="activated">0</strong></div>
+          <div class="stat"><div class="lbl">◷ Inactive Cards</div><strong id="inactive">0</strong></div>
+          <div class="stat"><div class="lbl">📶 Total NFC Taps</div><strong id="nfc">0</strong></div>
+          <div class="stat"><div class="lbl">📷 Total QR Scans</div><strong id="qr">0</strong></div>
+          <div class="stat"><div class="lbl">📈 Total Kunjungan</div><strong id="visits">0</strong></div>
+        </div>
+        <div class="note warn">Jumlah kunjungan (NFC/QR) menunjukkan berapa kali tautan kartu dibuka, <b>bukan</b> berapa review Google yang benar-benar dikirim.</div>
+        <div class="row">
+          <button class="primary" id="dashGenerate">Generate Cards</button>
+          <button class="secondary" id="dashZip">Download semua QR (ZIP)</button>
+          <button class="secondary" id="dashExport">Export CSV</button>
+        </div>
+        <div class="panel">
+          <h2 class="section">Aktivitas terbaru</h2>
+          <p class="muted">5 kartu terakhir berdasarkan aktivitas.</p>
+          <div class="scroll"><table><thead><tr><th>Card ID</th><th>Status</th><th>Aktivasi</th><th>NFC</th><th>QR</th></tr></thead><tbody id="dashRows"><tr><td colspan="5" class="muted">Belum ada data.</td></tr></tbody></table></div>
+        </div>
+      </div>
+
+      <!-- CARDS -->
+      <div class="view" id="view-cards">
+        <div class="panel">
+          <h2 class="section">Produksi kartu</h2>
+          <p class="muted">Generate Card ID unik + Activation Code. Kode aktivasi hanya ditampilkan sekali.</p>
+          <div class="row">
+            <input type="number" min="1" max="100" value="10" id="count" aria-label="Jumlah kartu" style="width:120px">
+            <button class="primary" id="generate">Generate Cards</button>
+            <button class="secondary" id="zip">Download semua QR (ZIP)</button>
+          </div>
+          <div id="export" class="hidden">
+            <div class="row"><button class="secondary" id="csv">Download CSV batch terbaru</button><span class="muted">Simpan sekarang — kode aktivasi tidak dapat dilihat ulang.</span></div>
+            <pre class="log" id="result"></pre>
+          </div>
+        </div>
+        <div class="panel">
+          <div class="row" style="justify-content:space-between">
+            <h2 class="section">Card Management</h2>
+            <button class="secondary" id="exportAll">Export CSV (semua kartu)</button>
+          </div>
+          <div class="scroll"><table>
+            <thead><tr><th>Card ID</th><th>Status</th><th>Activation Date</th><th>NFC</th><th>QR</th><th>Download QR</th></tr></thead>
+            <tbody id="rows"><tr><td colspan="6" class="muted">Belum ada kartu.</td></tr></tbody>
+          </table></div>
+        </div>
+      </div>
+
+      <!-- FLOW PREVIEW -->
+      <div class="view" id="view-flow">
+        <div class="note info">Preview di bawah menjalankan alur aplikasi asli (endpoint &amp; database yang sama). Butuh <code>DEMO_MODE=true</code> untuk redirect review simulasi.</div>
+        <div class="row"><a class="btn primary" href="/flow-preview" target="_blank">Buka Flow Preview di tab baru</a></div>
+        <iframe src="/flow-preview" title="Repiw Flow Preview"></iframe>
+      </div>
+
+      <!-- SETTINGS -->
+      <div class="view" id="view-settings">
+        <div class="panel">
+          <h2 class="section">Informasi aplikasi</h2>
+          <div class="scroll"><table>
+            <tbody>
+              <tr><th>BASE_URL</th><td class="mono" id="setBase">—</td></tr>
+              <tr><th>Mode</th><td id="setMode">—</td></tr>
+              <tr><th>Database</th><td class="mono" id="setDb">—</td></tr>
+              <tr><th>Dashboard</th><td class="mono">/admin</td></tr>
+              <tr><th>Flow Preview</th><td class="mono">/flow-preview</td></tr>
+              <tr><th>Struktur URL kartu</th><td class="mono">/c/&lt;CardID&gt;?src=qr | ?src=nfc</td></tr>
+            </tbody>
+          </table></div>
+        </div>
+        <div class="panel hidden" id="demoPanel">
+          <h2 class="section">Data Demo</h2>
+          <p class="muted">Hanya tersedia saat <code>DEMO_MODE=true</code>. Data demo disimpan terpisah dan tidak menyentuh data produksi.</p>
+          <div class="row">
+            <button class="primary" id="seedBtn">Isi data demo realistis</button>
+            <button class="secondary" id="resetBtn">Reset data demo</button>
+          </div>
+          <pre class="log hidden" id="seedLog"></pre>
+        </div>
+        <div class="panel">
+          <h2 class="section">Penting sebelum publik</h2>
+          <div class="note warn">
+            Set <code>DEMO_MODE=false</code> dan gunakan <code>BASE_URL</code> HTTPS final <b>sebelum</b> mencetak QR/NFC.
+            Jangan mengubah BASE_URL setelah kartu dicetak. Backup berkala file <code>data/repiw.sqlite</code>.
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const esc = (s) => String(s).replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
+let batch = [];
+let allCards = [];
+
+function toast(msg) { const t = $('toast'); t.textContent = msg; t.classList.add('show'); clearTimeout(t._t); t._t = setTimeout(() => t.classList.remove('show'), 2500); }
+async function api(url, options = {}) {
+  const r = await fetch(url, { credentials: 'same-origin', ...options });
+  const d = await r.json().catch(() => ({}));
+  if (!r.ok) throw Error(d.error || 'Request gagal');
+  return d;
+}
+async function download(url, name) {
+  const r = await fetch(url, { credentials: 'same-origin' });
+  if (!r.ok) { alert('Gagal download, login ulang.'); return; }
+  const u = URL.createObjectURL(await r.blob()); const a = document.createElement('a');
+  a.href = u; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(u), 1000);
+}
+
+async function refresh() {
+  try {
+    const s = await api('/api/admin/stats');
+    for (const k of ['total', 'activated', 'inactive', 'nfc', 'qr']) $(k).textContent = s[k];
+    $('visits').textContent = s.nfc + s.qr;
+    allCards = await api('/api/admin/cards');
+    renderRows('#rows', allCards);
+    renderRows('#dashRows', allCards.slice(0, 5));
+    $('login').classList.add('hidden'); $('app').classList.remove('hidden');
+  } catch (e) {
+    $('login').classList.remove('hidden'); $('app').classList.add('hidden');
+  }
+}
+function renderRows(sel, list) {
+  const tb = document.querySelector(sel);
+  if (!list.length) { tb.innerHTML = '<tr><td colspan="6" class="muted">Belum ada kartu. Generate terlebih dahulu.</td></tr>'; return; }
+  tb.innerHTML = list.map((c) => '<tr>' +
+    '<td class="mono">' + esc(c.code) + '</td>' +
+    '<td><span class="tag ' + (c.active ? 'active' : 'inactive') + '">' + (c.active ? 'ACTIVE' : 'INACTIVE') + '</span>' + (c.demo ? ' <span class="tag demo">DEMO</span>' : '') + '</td>' +
+    '<td>' + esc(c.activated_at || '—') + '</td><td>' + c.nfc + '</td><td>' + c.qr + '</td>' +
+    '<td><a class="btn secondary" href="/api/admin/qr/' + encodeURIComponent(c.code) + '" target="_blank">PNG</a></td></tr>').join('');
+}
+
+// ---- login ----
+$('loginForm').onsubmit = async (e) => {
+  e.preventDefault();
+  try { await api('/api/login', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: $('password').value }) }); $('password').value = ''; $('loginError').textContent = ''; refresh(); }
+  catch (err) { $('loginError').textContent = err.message; }
+};
+$('logout').onclick = async () => { try { await api('/api/logout', { method: 'POST' }); } catch {} location.reload(); };
+
+// ---- generate ----
+async function generate() {
+  const count = Number($('count').value || 10);
+  try {
+    const d = await api('/api/admin/generate', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ count }) });
+    batch = d.items;
+    $('export').classList.remove('hidden');
+    $('result').textContent = d.notice + '\n' + batch.map((x) => x.code + ' | ' + x.activationCode).join('\n');
+    toast('Berhasil membuat ' + batch.length + ' kartu');
+    refresh();
+  } catch (e) { alert(e.message); }
+}
+$('generate').onclick = generate;
+$('dashGenerate').onclick = () => showView('cards', true);
+$('zip').onclick = () => download('/api/admin/qr-zip', 'repiw-qr.zip');
+$('dashZip').onclick = () => download('/api/admin/qr-zip', 'repiw-qr.zip');
+
+// ---- CSV ----
+function toCSV(rows, cols) {
+  return [cols.join(',')].concat(rows.map((r) => cols.map((k) => '"' + String(r[k] ?? '').replaceAll('"', '""') + '"').join(','))).join('\r\n');
+}
+function saveCSV(text, name) {
+  const u = URL.createObjectURL(new Blob([text], { type: 'text/csv;charset=utf-8' })); const a = document.createElement('a');
+  a.href = u; a.download = name; a.click(); setTimeout(() => URL.revokeObjectURL(u), 1000);
+}
+$('csv').onclick = () => batch.length ? saveCSV(toCSV(batch, ['code', 'activationCode', 'qrURL', 'nfcURL']), 'repiw-new-cards.csv') : toast('Belum ada batch baru');
+$('exportAll').onclick = () => allCards.length ? saveCSV(toCSV(allCards, ['code', 'active', 'activated_at', 'created_at', 'nfc', 'qr']), 'repiw-cards.csv') : toast('Belum ada kartu');
+$('dashExport').onclick = () => allCards.length ? saveCSV(toCSV(allCards, ['code', 'active', 'activated_at', 'created_at', 'nfc', 'qr']), 'repiw-cards.csv') : toast('Belum ada kartu');
+
+// ---- navigation ----
+const titles = {
+  dashboard: ['Dashboard', 'Ringkasan produksi, aktivasi, dan kunjungan kartu'],
+  cards: ['Cards', 'Produksi dan pengelolaan kartu'],
+  flow: ['Flow Preview', 'Menjalankan alur aplikasi secara interaktif'],
+  settings: ['Settings', 'Konfigurasi dan catatan penting'],
+};
+function showView(name, scroll) {
+  document.querySelectorAll('.view').forEach((v) => v.classList.toggle('active', v.id === 'view-' + name));
+  document.querySelectorAll('.navlink').forEach((b) => b.classList.toggle('active', b.dataset.view === name));
+  $('viewTitle').textContent = titles[name][0]; $('viewSub').textContent = titles[name][1];
+  $('sidebar').classList.remove('open');
+  if (scroll) window.scrollTo({ top: 0, behavior: 'smooth' });
+}
+document.querySelectorAll('.navlink').forEach((b) => (b.onclick = () => showView(b.dataset.view, true)));
+$('burger').onclick = () => $('sidebar').classList.toggle('open');
+
+// ---- settings/info ----
+(async function settings() {
+  try {
+    const cfg = await api('/api/demo/config');
+    $('setBase').textContent = cfg.base;
+    $('setDb').textContent = cfg.dbFile || '—';
+    $('setMode').innerHTML = cfg.demo ? '<span class="tag demo">DEMO</span> (redirect review disimulasikan)' : 'Produksi';
+    $('modeFoot').textContent = cfg.demo ? 'demo mode' : 'production';
+    if (cfg.demo) $('demoPanel').classList.remove('hidden');
+  } catch {}
+})();
+
+// ---- demo data ----
+async function seedDemo() {
+  try {
+    const d = await api('/api/demo/seed', { method: 'POST' });
+    $('seedLog').classList.remove('hidden');
+    $('seedLog').textContent = 'Seed OK — total: ' + d.total + ', active: ' + d.active + ', inactive: ' + d.inactive + ', kunjungan: ' + d.visits;
+    toast('Data demo terisi'); refresh();
+  } catch (e) { toast(e.message); }
+}
+async function resetDemo() {
+  try {
+    await api('/api/demo/reset', { method: 'POST' });
+    $('seedLog').classList.remove('hidden');
+    $('seedLog').textContent = 'Data demo telah dibersihkan.';
+    toast('Data demo dibersihkan'); refresh();
+  } catch (e) { toast(e.message); }
+}
+$('seedBtn').onclick = seedDemo;
+$('resetBtn').onclick = resetDemo;
+
+refresh();
+</script>
+</body>
+</html>
