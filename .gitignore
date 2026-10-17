@@ -9,3 +9,14 @@ coverage/
 playwright-report/
 test-results/
 .tmp/
+
+# Next.js generated artifacts
+.next/
+.next-*/
+.next-e2e/
+.next-e2e-disabled/
+.next-hotfix/
+*.tsbuildinfo
+test-results/
+playwright-report/
+.tmp/
