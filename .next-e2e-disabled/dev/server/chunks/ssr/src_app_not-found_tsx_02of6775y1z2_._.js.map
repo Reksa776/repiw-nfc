@@ -1,0 +1,6 @@
+{
+  "version": 3,
+  "sources": [],
+  "sections": [
+    {"offset": {"line": 4, "column": 0}, "map": {"version":3,"sources":["file:///home/reksa/repiw-nextjs-project/src/app/not-found.tsx"],"sourcesContent":["'use client';\nimport Link from 'next/link';\nimport {LanguageSwitcher,useLanguage} from '@/lib/i18n';\nexport default function NotFound(){const {t}=useLanguage();return <main className=\"activation-shell\"><div className=\"auth-language\"><LanguageSwitcher/></div><div className=\"activation-card\"><div className=\"brand-mark\">R</div><p className=\"eyebrow\">REPIW</p><h1>{t('notFoundTitle')}</h1><p className=\"muted\">{t('notFoundDescription')}</p><Link href=\"/\" className=\"button\">{t('goHome')}</Link></div></main>}\n"],"names":["NotFound","t","className","href"],"mappings":";;;;;AACA;AACA;AAFA;;;;AAGe,SAASA;IAAW,MAAM,EAACC,CAAC,EAAC,GAAC,IAAA,kIAAW;IAAG,qBAAO,8OAAC;QAAKC,WAAU;;0BAAmB,8OAAC;gBAAIA,WAAU;0BAAgB,cAAA,8OAAC,uIAAgB;;;;;;;;;;0BAAQ,8OAAC;gBAAIA,WAAU;;kCAAkB,8OAAC;wBAAIA,WAAU;kCAAa;;;;;;kCAAO,8OAAC;wBAAEA,WAAU;kCAAU;;;;;;kCAAS,8OAAC;kCAAID,EAAE;;;;;;kCAAsB,8OAAC;wBAAEC,WAAU;kCAASD,EAAE;;;;;;kCAA2B,8OAAC,uKAAI;wBAACE,MAAK;wBAAID,WAAU;kCAAUD,EAAE;;;;;;;;;;;;;;;;;;AAA8B"}}]
+}

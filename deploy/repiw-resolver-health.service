@@ -1,0 +1,27 @@
+# One-shot health probe for the REPIW resolver worker.
+#
+# Exit codes from `--check`: 0 = a separate live worker has a fresh heartbeat,
+# 1 = no fresh heartbeat, 2 = the resolver kill switch is off.
+#
+# The probe never writes a heartbeat, so it cannot report a dead worker as healthy.
+#
+# Install:
+#   sudo cp deploy/repiw-resolver-health.service /etc/systemd/system/
+#   sudo cp deploy/repiw-resolver-health.timer /etc/systemd/system/
+#   sudo systemctl daemon-reload
+#   sudo systemctl enable --now repiw-resolver-health.timer
+#   systemctl list-timers repiw-resolver-health.timer
+#   journalctl -u repiw-resolver-health.service -n 20
+
+[Unit]
+Description=REPIW resolver worker health probe (read-only heartbeat check)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+User=repiw
+WorkingDirectory=/srv/repiw-app
+EnvironmentFile=/srv/repiw-app/.env
+# If Node is not at /usr/bin/node on this host, replace the executable with `command -v node`.
+ExecStart=/usr/bin/env node --import tsx scripts/resolver-worker.ts --check

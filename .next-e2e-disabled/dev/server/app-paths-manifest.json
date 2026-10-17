@@ -1,0 +1,13 @@
+{
+  "/admin/page": "app/admin/page.js",
+  "/api/admin/cards/activation-codes/route": "app/api/admin/cards/activation-codes/route.js",
+  "/api/admin/cards/route": "app/api/admin/cards/route.js",
+  "/api/admin/generate/route": "app/api/admin/generate/route.js",
+  "/api/admin/stats/route": "app/api/admin/stats/route.js",
+  "/api/demo/config/route": "app/api/demo/config/route.js",
+  "/api/login/route": "app/api/login/route.js",
+  "/api/resolve/[token]/route": "app/api/resolve/[token]/route.js",
+  "/api/resolve/route": "app/api/resolve/route.js",
+  "/c/[code]/page": "app/c/[code]/page.js",
+  "/page": "app/page.js"
+}
