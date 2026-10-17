@@ -19,6 +19,8 @@
     "db:import-mysql": "node scripts/migrate-mysql-to-postgres.js",
     "e2e:seed": "node scripts/seed-e2e-admin.js",
     "resolver:worker": "tsx scripts/resolver-worker.ts",
+    "resolver:worker:check": "tsx scripts/resolver-worker.ts --check",
+    "resolver:worker:config": "tsx scripts/resolver-worker.ts --print-config",
     "resolver:probe": "tsx scripts/resolver-probe.ts",
     "resolver:backfill": "tsx scripts/backfill-destinations.ts"
   },

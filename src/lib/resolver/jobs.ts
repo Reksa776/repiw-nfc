@@ -80,6 +80,19 @@ export async function createOrReuseJob(
     // Serialize per binding so two concurrent requests cannot both create an active job.
     await tx.query('SELECT pg_advisory_xact_lock(hashtext(?))', [binding]);
 
+    // Retire overdue in-flight jobs for this binding FIRST.
+    //
+    // `uq_resolution_jobs_active` is a partial unique index over (binding_hash) for
+    // pending/running rows, and it does not consider `expires_at`. Without this sweep, an overdue
+    // job that nobody polls again (the usual case when no worker is running) keeps the index slot
+    // occupied and every retry for the same card + URL fails with a 23505 unique violation —
+    // observed in production as a permanently stuck resolver.
+    await tx.execute(
+      `UPDATE resolution_jobs SET status='expired', finished_at=CURRENT_TIMESTAMP, worker_id=NULL, locked_at=NULL, updated_at=CURRENT_TIMESTAMP
+       WHERE binding_hash=? AND status IN ('pending','running') AND expires_at <= CURRENT_TIMESTAMP`,
+      [binding],
+    );
+
     const [existing] = await tx.query<ResolutionJob>(
       `SELECT * FROM resolution_jobs WHERE binding_hash=? AND status IN ('pending','running') AND expires_at > CURRENT_TIMESTAMP ORDER BY id DESC LIMIT 1`,
       [binding],
@@ -100,6 +113,25 @@ export async function createOrReuseJob(
 export async function getJobByToken(db: JobTx, token: string): Promise<ResolutionJob | null> {
   const [row] = await db.query<ResolutionJob>('SELECT * FROM resolution_jobs WHERE job_token=? LIMIT 1', [token]);
   return row ?? null;
+}
+
+/**
+ * Lazily expire one overdue job.
+ *
+ * `recoverStaleJobs` is run by the worker, but the API cannot assume a worker is alive (on a
+ * serverless host there is none). Without this, an unconsumed job stays `pending` forever and the
+ * polling endpoint never reports a terminal state — the user is left waiting until their own
+ * client deadline. Called by GET /api/resolve/[token] before it reads the job.
+ *
+ * Returns true when this call performed the transition.
+ */
+export async function expireJobIfOverdue(db: JobTx, token: string): Promise<boolean> {
+  const result = await db.execute(
+    `UPDATE resolution_jobs SET status='expired', finished_at=CURRENT_TIMESTAMP, worker_id=NULL, locked_at=NULL, updated_at=CURRENT_TIMESTAMP
+     WHERE job_token=? AND status IN ('pending','running') AND expires_at <= CURRENT_TIMESTAMP`,
+    [token],
+  );
+  return result.affectedRows > 0;
 }
 
 export async function getJobById(db: JobTx, id: number | string): Promise<ResolutionJob | null> {

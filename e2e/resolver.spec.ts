@@ -56,6 +56,25 @@ async function visitCount(code:string){
  }finally{await db.end();}
 }
 
+async function clearWorkerHeartbeats(){
+ const db=pool();
+ try{ await db.query('DELETE FROM resolver_workers'); }
+ finally{await db.end();}
+}
+
+async function heartbeat(workerId:string){
+ const db=pool();
+ try{
+  await db.query("INSERT INTO resolver_workers(worker_id,hostname,concurrency,started_at,last_seen_at) VALUES($1,'e2e',1,CURRENT_TIMESTAMP,CURRENT_TIMESTAMP) ON CONFLICT(worker_id) DO UPDATE SET last_seen_at=CURRENT_TIMESTAMP",[workerId]);
+ }finally{await db.end();}
+}
+
+async function expireJob(token:string){
+ const db=pool();
+ try{ await db.query("UPDATE resolution_jobs SET expires_at=CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE job_token=$1",[token]); }
+ finally{await db.end();}
+}
+
 async function auditCount(code:string){
  const db=pool();
  try{
@@ -128,6 +147,75 @@ test('async resolution request is queued without running a browser, and duplicat
  expect(new Date(againBody.expiresAt).getTime()).toBeGreaterThan(Date.now());
 });
 
+test('a job nobody consumes reports worker availability and finally expires instead of spinning',async({page})=>{
+ await login(page);
+ const [card]=await generate(page,1);
+ await clearWorkerHeartbeats();
+
+ const queued=await page.request.post('/api/resolve',{headers:ip(),data:{url:SHORT_LINK,code:card.code}});
+ expect(queued.status()).toBe(200);
+ const {jobToken}=await queued.json();
+ expect(jobToken).toMatch(TOKEN_PATTERN);
+
+ // No fresh heartbeat: the UI can tell the user the worker is not running within seconds.
+ const noWorker=await page.request.get(`/api/resolve/${encodeURIComponent(jobToken)}`);
+ expect(noWorker.status()).toBe(200);
+ expect((await noWorker.json()).workerAvailable).toBe(false);
+
+ await heartbeat('e2e-worker');
+ const withWorker=await page.request.get(`/api/resolve/${encodeURIComponent(jobToken)}`);
+ expect((await withWorker.json()).workerAvailable).toBe(true);
+
+ // Nobody ever claims it. Once overdue, the poll endpoint itself must report the terminal state;
+ // only a worker used to do this sweep, so without one the job stayed `pending` forever.
+ await expireJob(jobToken);
+ const expired=await page.request.get(`/api/resolve/${encodeURIComponent(jobToken)}`);
+ expect(expired.status()).toBe(200);
+ expect((await expired.json()).status).toBe('expired');
+
+ // The stale row must not block a retry for the same card + URL (partial unique index).
+ const retry=await page.request.post('/api/resolve',{headers:ip(),data:{url:SHORT_LINK,code:card.code}});
+ expect(retry.status()).toBe(200);
+ const retryBody=await retry.json();
+ expect(retryBody.reused).toBe(false);
+ expect(retryBody.jobToken).not.toBe(jobToken);
+
+ await clearWorkerHeartbeats();
+});
+
+test('the activation form stops waiting when no worker is running and manual activation still works',async({page})=>{
+ await login(page);
+ const [card]=await generate(page,1);
+ await clearWorkerHeartbeats();
+
+ await page.goto(`/c/${card.code}?src=qr`);
+ await page.locator('input[name=activationCode]').fill(card.activationCode);
+ await page.locator('input[name=reviewURL]').fill(SHORT_LINK);
+ await page.locator('form.form-stack > button').first().click();
+
+ // Terminal "worker tidak berjalan" state within the short grace window. The pre-hotfix UI stayed
+ // on "Memproses…" for the full 120 s client deadline and then showed a generic timeout.
+ const status=page.locator('div.field-hint[role=status]').filter({hasText:'worker'});
+ await expect(status).toContainText('worker tidak aktif',{timeout:30_000});
+ // A retry affordance is always rendered, so the user is never stuck without an action.
+ await expect(status.locator('button.button-outline')).toBeVisible();
+ // Nothing was activated by a failed resolution.
+ expect((await cardRow(card.code)).active).toBe(0);
+
+ // Manual activation with an already valid official Google Review URL is preserved.
+ await page.locator('input[name=reviewURL]').fill(REVIEW_URL);
+ await page.locator('form.form-stack > button').first().click();
+ const submit=page.locator('form.form-stack > button').last();
+ await expect(submit).toBeEnabled({timeout:15_000});
+ await submit.click();
+ await expect(page.locator('.success').filter({hasText:card.code}).first()).toBeVisible({timeout:30_000});
+
+ const row=await cardRow(card.code);
+ expect(row.active).toBe(1);
+ expect(row.review_url).toBe(REVIEW_URL);
+ expect(row.resolution_method).toBe('manual');
+});
+
 test('resolution requests reject non-Google and unauthenticated callers',async({page,request})=>{
  await login(page);
  const [card]=await generate(page,1);
@@ -168,6 +256,14 @@ test('verified resolution job activates a card exactly once and stores provenanc
  const raw=await res.text();
  expect(res.status(),`activation rejected: ${raw}`).toBe(200);
  expect(JSON.parse(raw).reviewURL).toBe(REVIEW_URL);
+
+ // The exact contract the activation form consumes: terminal success plus the direct review URL.
+ const polled=await page.request.get(`/api/resolve/${encodeURIComponent(token)}`);
+ expect(polled.status()).toBe(200);
+ const polledJob=await polled.json();
+ expect(polledJob.status).toBe('success');
+ expect(polledJob.reviewUrl).toBe(REVIEW_URL);
+ expect(polledJob.workerAvailable).toBeNull();
 
  const row=await cardRow(card.code);
  expect(row.active).toBe(1);

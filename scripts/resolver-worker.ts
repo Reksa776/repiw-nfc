@@ -1,16 +1,19 @@
 // Standalone resolution worker.
 //
-// Runs OUTSIDE the Next.js request path: it polls the PostgreSQL `resolution_jobs` table, claims
-// one job at a time with FOR UPDATE SKIP LOCKED, runs the headless resolver, and records the
-// outcome. Job state is entirely in the database, so the worker can be restarted or scaled and
-// no job is lost if a Next.js instance restarts.
+// Runs OUTSIDE the Next.js request path. This process is the ONLY place Chromium is ever started,
+// so it must be deployed on a host that allows a long-running process (VPS, container, Railway,
+// Fly.io, Render worker, ...). It is deliberately NOT a Vercel Function: serverless invocations are
+// time-bounded and cannot host a browser, a poll loop, or a durable queue consumer.
+//
+// It polls the PostgreSQL `resolution_jobs` table, claims one job at a time with FOR UPDATE SKIP
+// LOCKED, runs the headless resolver, records the outcome, and writes a liveness heartbeat to
+// `resolver_workers` (read by the Next.js API to answer "is a worker consuming the queue?").
 //
 // Usage:
-//   npm run resolver:worker            # long-running poll loop
+//   npm run resolver:worker            # long-running poll loop (supervise this)
 //   npm run resolver:worker -- --once  # drain pending jobs, then exit (tests / backfill)
-//
-// The worker respects PLAYWRIGHT_RESOLVER_ENABLED as the global kill switch: with the resolver
-// disabled it refuses to run.
+//   npm run resolver:worker:check      # health probe, exit 0 when healthy (systemd/Docker)
+//   npm run resolver:worker -- --print-config   # print effective config (no secrets)
 
 import 'dotenv/config';
 import os from 'node:os';
@@ -19,16 +22,37 @@ import { resolverConfig } from '../src/lib/resolver/config';
 import { resolveGoogleReviewUrl } from '../src/lib/resolver/index';
 import { claimNextJob, completeJob, failJob, recoverStaleJobs } from '../src/lib/resolver/jobs';
 import { createPgJobsDb } from '../src/lib/resolver/pg-store';
+import { WORKER_HEARTBEAT_MS, WORKER_STALE_SECONDS, heartbeatWorker, readWorkerHealth, retireWorker } from '../src/lib/resolver/worker-health';
 
 const ONCE = process.argv.includes('--once');
+const CHECK = process.argv.includes('--check');
+const PRINT_CONFIG = process.argv.includes('--print-config');
 const POLL_MS = Number(process.env.RESOLVER_POLL_MS || 2000);
 const WORKER_ID = `${os.hostname()}-${process.pid}-${Math.random().toString(36).slice(2, 8)}`;
 
 const config = resolverConfig();
 
+if (PRINT_CONFIG) {
+  // No secrets are printed: only booleans and numbers the operator needs to verify the host.
+  console.log(JSON.stringify({
+    enabled: config.enabled,
+    timeoutMs: config.timeoutMs,
+    maxConcurrency: config.maxConcurrency,
+    headless: config.headless,
+    browserPath: config.browserPath,
+    placesApiKeyConfigured: Boolean(config.placesApiKey),
+    databaseUrlConfigured: Boolean(process.env.DATABASE_URL?.trim()),
+    pollMs: POLL_MS,
+    workerHeartbeatMs: WORKER_HEARTBEAT_MS,
+    workerStaleSeconds: WORKER_STALE_SECONDS,
+  }, null, 2));
+  process.exit(0);
+}
+
 if (!config.enabled) {
   console.error('[resolver-worker] PLAYWRIGHT_RESOLVER_ENABLED is not set to 1 — refusing to run (kill switch).');
-  process.exit(0);
+  // --check reports "not healthy" so a supervisor/healthcheck can see the kill switch explicitly.
+  process.exit(CHECK ? 2 : 0);
 }
 
 const DATABASE_URL = process.env.DATABASE_URL?.trim();
@@ -51,6 +75,34 @@ for (const signal of ['SIGINT', 'SIGTERM'] as const) {
 
 function log(...args: unknown[]) {
   console.log(`[resolver-worker ${WORKER_ID}]`, ...args);
+}
+
+let heartbeatTimer: ReturnType<typeof setInterval> | null = null;
+let heartbeatWarningLogged = false;
+
+/** Publish liveness. Failures are logged once and never stop resolution work. */
+async function beat(): Promise<void> {
+  try {
+    await heartbeatWorker(db, { workerId: WORKER_ID, hostname: os.hostname(), concurrency: config.maxConcurrency });
+  } catch (error) {
+    if (!heartbeatWarningLogged) {
+      heartbeatWarningLogged = true;
+      const message = error instanceof Error ? error.message : String(error);
+      // The most common cause is the heartbeat migration not being applied yet. Resolution still
+      // works; only the API's "worker availability" hint degrades to `null`.
+      console.error(`[resolver-worker] heartbeat failed (${message}). Is migration 8 (resolver_worker_heartbeat) applied?`);
+    }
+  }
+}
+
+function startHeartbeat(): void {
+  void beat();
+  if (!heartbeatTimer) heartbeatTimer = setInterval(() => { void beat(); }, WORKER_HEARTBEAT_MS);
+}
+
+async function stopHeartbeat(): Promise<void> {
+  if (heartbeatTimer) { clearInterval(heartbeatTimer); heartbeatTimer = null; }
+  await retireWorker(db, WORKER_ID).catch(() => undefined);
 }
 
 async function processOne(): Promise<boolean> {
@@ -85,10 +137,24 @@ async function main() {
   const recovered = await recoverStaleJobs(db);
   log(`startup: expired=${recovered.expired} requeued=${recovered.requeued} concurrency=${config.maxConcurrency} timeoutMs=${config.timeoutMs}`);
 
+  if (CHECK) {
+    // Exit codes: 0 = healthy (a fresh heartbeat is visible), 1 = not healthy, 2 = kill switch on.
+    await beat();
+    const health = await readWorkerHealth(db);
+    const healthy = health.available === true;
+    console.log(JSON.stringify({ ok: healthy, enabled: config.enabled, workers: health.workers, lastSeenSecondsAgo: health.lastSeenSecondsAgo, workerId: WORKER_ID }, null, 2));
+    await stopHeartbeat();
+    await pool.end();
+    process.exit(healthy ? 0 : 1);
+  }
+
+  startHeartbeat();
+
   if (ONCE) {
     let processed = 0;
     while (await processOne()) processed++;
     log(`--once complete: processed ${processed} job(s)`);
+    await stopHeartbeat();
     await pool.end();
     return;
   }
@@ -102,6 +168,7 @@ async function main() {
     }
     if (!didWork) await sleep(POLL_MS);
   }
+  await stopHeartbeat();
   await pool.end();
   log('stopped.');
 }
@@ -112,6 +179,7 @@ function sleep(ms: number) {
 
 main().catch(async (error) => {
   console.error('[resolver-worker] fatal:', error instanceof Error ? error.message : error);
+  await stopHeartbeat().catch(() => undefined);
   await pool.end().catch(() => undefined);
   process.exit(1);
 });
