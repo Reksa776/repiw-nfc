@@ -1,25 +1,30 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { localizedMessage, useLanguage } from '@/lib/i18n';
+import {
+  MAX_POLL_MS,
+  POLL_INTERVAL_MS,
+  POLL_REQUEST_TIMEOUT_MS,
+  REQUEST_TIMEOUT_MS,
+  isDirectReviewUrl,
+  phaseForJob,
+  phaseForResolveResponse,
+  type JobView,
+  type ResolutionPhase,
+} from '@/lib/resolver/client-state';
 
-type Phase = 'idle' | 'resolving' | 'verified' | 'inconclusive' | 'failed' | 'disabled' | 'unsupported' | 'timeout' | 'unavailable';
-type JobResponse = { status?: string; placeId?: string | null; reviewUrl?: string | null; businessName?: string | null; businessAddress?: string | null; errorCode?: string | null };
+// `verified` is the editor's own success state: the destination is ready to preview.
+type Phase = ResolutionPhase | 'verified';
+type JobResponse = JobView;
 type Preview = { oldUrl: string | null; newUrl: string; placeId: string | null; method: string; businessName: string | null; businessAddress: string | null };
 type CardDestination = { code: string; active: number; review_url: string | null; place_id: string | null; source_url: string | null; resolution_status: string | null; resolution_method: string | null; resolved_business_name: string | null; resolved_business_address: string | null };
 
-const POLL_INTERVAL_MS = 2000;
-const MAX_POLL_MS = 120000;
+const RETRY_PHASES: Phase[] = ['inconclusive', 'failed', 'timeout', 'unavailable', 'worker_unavailable', 'expired', 'rate_limited'];
+const FALLBACK_PHASES: Phase[] = ['disabled', 'unavailable', 'worker_unavailable', 'expired', 'rate_limited'];
 
-/** Mirrors the server-side allow-list: only a direct Google review destination may be stored. */
-function looksOfficialReview(value: string): boolean {
-  try {
-    const u = new URL(value);
-    if (u.protocol !== 'https:' || u.username || u.password) return false;
-    if (u.hostname === 'search.google.com') return u.pathname === '/local/writereview' && Boolean(u.searchParams.get('placeid'));
-    if (u.hostname === 'g.page') return /^\/r\/[^/]+\/review\/?$/i.test(u.pathname);
-  } catch { /* not a URL */ }
-  return false;
+function sleep(ms: number) {
+  return new Promise((done) => window.setTimeout(done, ms));
 }
 
 /**
@@ -40,10 +45,11 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
   const [preview, setPreview] = useState<Preview | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
+  const runRef = useRef(0);
 
   useEffect(() => {
     let active = true;
-    fetch(`/api/admin/cards/${code}/destination`, { cache: 'no-store' })
+    fetch(`/api/admin/cards/${code}/destination`, { cache: 'no-store', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) })
       .then(async (res) => (res.ok ? ((await res.json()).card as CardDestination) : null))
       .then((card) => { if (active && card) setCurrent(card); })
       .catch(() => undefined);
@@ -53,14 +59,21 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
   const currentUrl = current?.review_url ?? null;
 
   function resetVerification() {
+    runRef.current += 1;
     setPhase('idle'); setJobToken(null); setResolvedUrl(''); setBusinessName(null); setBusinessAddress(null); setPreview(null); setMessage('');
+  }
+
+  function cancelResolution() {
+    runRef.current += 1;
+    setPhase('idle'); setMessage('');
   }
 
   async function resolve() {
     const value = input.trim();
     setMessage(''); setPreview(null);
     if (!value) return;
-    if (looksOfficialReview(value)) {
+    const run = ++runRef.current;
+    if (isDirectReviewUrl(value)) {
       // A direct review link needs no server resolution; it still goes through the same preview.
       setResolvedUrl(value); setJobToken(null); setPhase('verified');
       await requestPreview({ reviewURL: value });
@@ -68,42 +81,69 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
     }
     setPhase('resolving'); setBusy(true);
     try {
-      const res = await fetch('/api/resolve', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ url: value, cardCode: code }),
-      });
-      const body = await res.json().catch(() => ({}));
-      if (res.status === 503) { setPhase('disabled'); return; }
-      if (res.status === 400) { setPhase('unsupported'); return; }
-      if (!res.ok) { setPhase('failed'); setMessage(localizedMessage(body.error || t('resolverFailed'), language)); return; }
-      await poll(body.jobToken as string);
-    } catch (err) {
-      setPhase('unavailable');
-      setMessage(err instanceof Error ? localizedMessage(err.message, language) : t('unexpectedError'));
+      let res: Response;
+      try {
+        res = await fetch('/api/resolve', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ url: value, cardCode: code }),
+          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+        });
+      } catch {
+        if (run === runRef.current) setPhase('unavailable');
+        return;
+      }
+      const body = await res.json().catch(() => null);
+      if (run !== runRef.current) return;
+      const nextPhase = phaseForResolveResponse(res.status, body);
+      if (nextPhase !== 'resolving') {
+        setPhase(nextPhase);
+        if (body?.error && nextPhase !== 'disabled' && nextPhase !== 'rate_limited') setMessage(localizedMessage(body.error, language));
+        return;
+      }
+      if (!body?.jobToken) { setPhase('unavailable'); return; }
+      await poll(body.jobToken, Date.now(), run, body.workerAvailable ?? null);
     } finally { setBusy(false); }
   }
 
-  async function poll(token: string) {
-    const deadline = Date.now() + MAX_POLL_MS;
-    while (Date.now() < deadline) {
-      await new Promise((done) => window.setTimeout(done, POLL_INTERVAL_MS));
+  async function poll(token: string, startedAt: number, run: number, workerAvailable: boolean | null) {
+    let consecutiveErrors = 0;
+    while (Date.now() - startedAt < MAX_POLL_MS) {
+      if (run !== runRef.current) return;
+      await sleep(POLL_INTERVAL_MS);
+      if (run !== runRef.current) return;
+
       let job: JobResponse;
       try {
-        const res = await fetch(`/api/resolve/${encodeURIComponent(token)}`, { cache: 'no-store' });
-        if (!res.ok) { setPhase('unavailable'); return; }
+        const res = await fetch(`/api/resolve/${encodeURIComponent(token)}`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(POLL_REQUEST_TIMEOUT_MS),
+        });
+        if (!res.ok) { setPhase(res.status === 503 ? 'unavailable' : 'failed'); return; }
         job = await res.json();
-      } catch { setPhase('unavailable'); return; }
+      } catch {
+        consecutiveErrors += 1;
+        if (run !== runRef.current) return;
+        if (consecutiveErrors >= 3) { setPhase('unavailable'); return; }
+        continue;
+      }
+      consecutiveErrors = 0;
 
-      if (job.status === 'success' && job.reviewUrl) {
-        setJobToken(token); setResolvedUrl(job.reviewUrl); setBusinessName(job.businessName ?? null); setBusinessAddress(job.businessAddress ?? null); setPhase('verified');
+      const nextPhase = phaseForJob(
+        { ...job, workerAvailable: job.workerAvailable ?? workerAvailable },
+        { elapsedMs: Date.now() - startedAt, consecutiveErrors },
+      );
+      if (nextPhase === 'resolving') continue;
+      if (run !== runRef.current) return;
+      if (nextPhase === 'success') {
+        setJobToken(token); setResolvedUrl(job.reviewUrl ?? ''); setBusinessName(job.businessName ?? null); setBusinessAddress(job.businessAddress ?? null); setPhase('verified');
         await requestPreview({ resolutionJobToken: token });
         return;
       }
-      if (job.status === 'inconclusive') { setPhase('inconclusive'); return; }
-      if (job.status === 'failed' || job.status === 'expired') { setPhase(job.errorCode === 'timeout' ? 'timeout' : 'failed'); return; }
+      setPhase(nextPhase);
+      return;
     }
-    setPhase('timeout');
+    if (run === runRef.current) setPhase('timeout');
   }
 
   async function requestPreview(body: { reviewURL?: string; resolutionJobToken?: string }): Promise<boolean> {
@@ -113,6 +153,7 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(body),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { setMessage(localizedMessage(data.error || t('dashboardLoadError'), language)); return false; }
@@ -132,6 +173,7 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(jobToken ? { resolutionJobToken: jobToken, confirm: true } : { reviewURL: preview.newUrl, confirm: true }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       const data = await res.json().catch(() => ({}));
       if (!res.ok) { setMessage(localizedMessage(data.error || t('dashboardLoadError'), language)); return; }
@@ -143,14 +185,18 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
 
   const phaseMessage: Record<Phase, string> = {
     idle: '',
-    resolving: t('resolvingLink'),
     verified: t('verifiedReady'),
+    resolving: t('resolvingLink'),
+    success: t('verifiedReady'),
     inconclusive: t('resolverInconclusive'),
     failed: t('resolverFailed'),
     disabled: t('resolverDisabled'),
     unsupported: t('resolverUnsupported'),
     timeout: t('resolverTimeout'),
     unavailable: t('resolverUnavailable'),
+    worker_unavailable: t('resolverWorkerUnavailable'),
+    expired: t('resolverExpired'),
+    rate_limited: t('resolverRateLimited'),
   };
   const canResolve = !busy && phase !== 'resolving' && input.trim().length >= 2;
   const canConfirm = Boolean(preview) && preview?.newUrl !== currentUrl;
@@ -168,8 +214,10 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
         {businessName && <p>{t('resolvedBusiness')}: <b>{businessName}</b>{businessAddress ? <> — {businessAddress}</> : null}</p>}
         {resolvedUrl && <p>{t('resolvedReviewLink')}: <a href={resolvedUrl} target="_blank" rel="noreferrer">{resolvedUrl}</a></p>}
       </>}
-      {(phase === 'inconclusive' || phase === 'failed' || phase === 'timeout' || phase === 'unavailable') && <button type="button" className="button button-outline" onClick={() => { void resolve(); }}>{t('retryResolution')}</button>}
+      {RETRY_PHASES.includes(phase) && <button type="button" className="button button-outline" onClick={() => { void resolve(); }}>{t('retryResolution')}</button>}
+      {FALLBACK_PHASES.includes(phase) && <p className="field-hint">{t('resolverManualFallback')}</p>}
     </div>}
+    {phase === 'resolving' && <div className="field-hint" role="status"><strong>{t('resolvingLink')}</strong><button type="button" className="button button-outline" onClick={cancelResolution}>{t('resolverCancel')}</button></div>}
     {preview && <div className="panel destination-preview">
       <p className="eyebrow">{t('destPreview')}</p>
       <p className="field-hint">{id ? 'Tujuan lama' : 'Old destination'}: <code>{preview.oldUrl || '—'}</code></p>

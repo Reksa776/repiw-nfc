@@ -1,7 +1,8 @@
 import { describe, expect, it, beforeAll, beforeEach } from 'vitest';
 import { createRequire } from 'node:module';
 import { PGlite } from '@electric-sql/pglite';
-import { createOrReuseJob, claimNextJob, completeJob, failJob, recoverStaleJobs, getJobByToken, writeAudit, type JobsDb, type JobTx } from '../src/lib/resolver/jobs';
+import { createOrReuseJob, claimNextJob, completeJob, expireJobIfOverdue, failJob, recoverStaleJobs, getJobByToken, writeAudit, type JobsDb, type JobTx } from '../src/lib/resolver/jobs';
+import { UNKNOWN_WORKER_HEALTH, heartbeatWorker, readWorkerHealth, retireWorker } from '../src/lib/resolver/worker-health';
 
 const require = createRequire(import.meta.url);
 const { migrations } = require('../scripts/migrate-postgres.js') as { migrations: Array<{ name: string; sql: string[] }> };
@@ -67,6 +68,7 @@ describe('migration compatibility (additive)', () => {
     expect(names).toContain('visits');
     expect(names).toContain('resolution_jobs');
     expect(names).toContain('resolution_audit');
+    expect(names).toContain('resolver_workers');
   });
 
   it('adds destination provenance columns to cards without removing existing ones', async () => {
@@ -108,6 +110,18 @@ describe('resolution job lifecycle', () => {
     const stored = await getJobByToken(db, a.job.job_token);
     expect(stored?.status).toBe('success');
     expect(stored?.place_id).toBe('ChIJQeGqDPodby4RQBEuhEv7Zjs');
+  });
+
+  it('does not let an unswept overdue job block a retry for the same binding', async () => {
+    const first = await createOrReuseJob(db, { inputUrl: 'https://maps.app.goo.gl/STUCK', cardCode: 'RP-0000000009', createdBy: 'public' });
+    // Simulate a job nobody polls again (no worker running): still `pending`, already overdue.
+    await tx.execute("UPDATE resolution_jobs SET expires_at=CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE job_token=$1", [first.job.job_token]);
+
+    const retry = await createOrReuseJob(db, { inputUrl: 'https://maps.app.goo.gl/STUCK', cardCode: 'RP-0000000009', createdBy: 'public' });
+    expect(retry.reused).toBe(false);
+    expect(retry.job.job_token).not.toBe(first.job.job_token);
+    // The stale row is retired instead of blocking the partial unique index.
+    expect((await getJobByToken(db, first.job.job_token))?.status).toBe('expired');
   });
 
   it('blocks a duplicate active job at the database level (partial unique index)', async () => {
@@ -159,9 +173,82 @@ describe('resolution job lifecycle', () => {
     expect((await getJobByToken(db, staleToken))?.status).toBe('pending');
   });
 
+  it('lazily expires one overdue job without touching live or terminal jobs', async () => {
+    const { job } = await createOrReuseJob(db, { inputUrl: 'https://maps.app.goo.gl/LAZY', cardCode: 'RP-0000000004', createdBy: 'public' });
+    // Fresh job: not expired.
+    expect(await expireJobIfOverdue(tx, job.job_token)).toBe(false);
+    expect((await getJobByToken(db, job.job_token))?.status).toBe('pending');
+
+    // Overdue job: the polling endpoint must reach a terminal state even with no worker running.
+    await tx.execute("UPDATE resolution_jobs SET expires_at=CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE job_token=$1", [job.job_token]);
+    expect(await expireJobIfOverdue(tx, job.job_token)).toBe(true);
+    expect((await getJobByToken(db, job.job_token))?.status).toBe('expired');
+    // Idempotent: the second call performs no transition.
+    expect(await expireJobIfOverdue(tx, job.job_token)).toBe(false);
+
+    // A success is never rewritten by the sweeper.
+    const done = await createOrReuseJob(db, { inputUrl: 'https://maps.app.goo.gl/DONE', cardCode: 'RP-0000000005', createdBy: 'public' });
+    await completeJob(db, done.job.id, {
+      status: 'success', method: 'playwright', inputUrl: '', resolvedUrl: null, placeId: 'ChIJQeGqDPodby4RQBEuhEv7Zjs',
+      reviewUrl: 'https://search.google.com/local/writereview?placeid=ChIJQeGqDPodby4RQBEuhEv7Zjs', businessName: null, businessAddress: null,
+      errorCode: null, errorMessage: null, durationMs: 1, usedBrowser: true,
+    });
+    await tx.execute("UPDATE resolution_jobs SET expires_at=CURRENT_TIMESTAMP - INTERVAL '1 minute' WHERE job_token=$1", [done.job.job_token]);
+    expect(await expireJobIfOverdue(tx, done.job.job_token)).toBe(false);
+    expect((await getJobByToken(db, done.job.job_token))?.status).toBe('success');
+  });
+
   it('records an audit row', async () => {
     await writeAudit(tx, { actor: 'admin', action: 'destination.update', cardCode: 'RP-0000000001', oldUrl: 'old', newUrl: 'new', placeId: 'ChIJQeGqDPodby4RQBEuhEv7Zjs', detail: 'test' });
     const rows = await tx.query<{ action: string }>("SELECT action FROM resolution_audit WHERE card_code='RP-0000000001'");
     expect(rows.some((r) => r.action === 'destination.update')).toBe(true);
+  });
+});
+
+// Regression coverage for the hotfix: the API tells the browser whether any worker is consuming the
+// queue. Without this the UI can only wait for its own deadline when no worker is deployed.
+describe('resolver worker liveness', () => {
+  beforeEach(async () => {
+    await tx.execute('DELETE FROM resolver_workers');
+  });
+
+  it('reports no worker before the first heartbeat, then a live worker, then a stale one', async () => {
+    expect((await readWorkerHealth(tx)).available).toBe(false);
+
+    await heartbeatWorker(tx, { workerId: 'worker-1', hostname: 'resolver-host', concurrency: 1 });
+    const fresh = await readWorkerHealth(tx);
+    expect(fresh.available).toBe(true);
+    expect(fresh.workers).toBe(1);
+    expect(fresh.lastSeenSecondsAgo).toBeLessThan(5);
+
+    await tx.execute("UPDATE resolver_workers SET last_seen_at=CURRENT_TIMESTAMP - INTERVAL '2 minutes' WHERE worker_id='worker-1'");
+    const stale = await readWorkerHealth(tx);
+    expect(stale.available).toBe(false);
+    expect(stale.workers).toBe(1);
+
+    // The periodic beat revives the same worker row (upsert, no duplicate rows).
+    await heartbeatWorker(tx, { workerId: 'worker-1', hostname: 'resolver-host', concurrency: 2 });
+    expect((await readWorkerHealth(tx)).available).toBe(true);
+    expect((await readWorkerHealth(tx)).workers).toBe(1);
+
+    // Graceful shutdown removes the row so a stopped worker is not reported alive.
+    await retireWorker(tx, 'worker-1');
+    expect((await readWorkerHealth(tx)).available).toBe(false);
+  });
+
+  it('degrades to unknown when the heartbeat migration has not been applied', async () => {
+    const missingTable = {
+      query: async () => {
+        const error = new Error('relation "resolver_workers" does not exist') as Error & { code?: string };
+        error.code = '42P01';
+        throw error;
+      },
+      execute: async () => {
+        const error = new Error('relation "resolver_workers" does not exist') as Error & { code?: string };
+        error.code = '42P01';
+        throw error;
+      },
+    } as unknown as JobTx;
+    expect(await readWorkerHealth(missingTable)).toEqual(UNKNOWN_WORKER_HEALTH);
   });
 });

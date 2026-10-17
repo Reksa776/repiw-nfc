@@ -1,25 +1,30 @@
 'use client';
 
-import { FormEvent, useState } from 'react';
+import { FormEvent, useRef, useState } from 'react';
 import { LanguageSwitcher, localizedMessage, useLanguage } from '@/lib/i18n';
+import {
+  MAX_POLL_MS,
+  POLL_INTERVAL_MS,
+  POLL_REQUEST_TIMEOUT_MS,
+  REQUEST_TIMEOUT_MS,
+  isDirectReviewUrl,
+  phaseForJob,
+  phaseForResolveResponse,
+  type JobView,
+  type ResolutionPhase,
+} from '@/lib/resolver/client-state';
 
 type Inspection = { kind: 'review' | 'maps-place' | 'maps-short' | 'google-other'; finalURL: string; resolved: boolean };
 type BusinessResult = { id: string; name: string; address: string; reviewURL: string };
-type ResolverPhase = 'resolving' | 'success' | 'inconclusive' | 'failed' | 'disabled' | 'unsupported' | 'timeout' | 'unavailable';
-type Resolution = { token: string; phase: ResolverPhase; placeId?: string | null; reviewUrl?: string | null; businessName?: string | null; businessAddress?: string | null };
-type JobResponse = { status?: string; placeId?: string | null; reviewUrl?: string | null; businessName?: string | null; businessAddress?: string | null; errorCode?: string | null };
+type ResolvePhase = Exclude<ResolutionPhase, 'idle'>;
+type Resolution = { token: string; phase: ResolvePhase; placeId?: string | null; reviewUrl?: string | null; businessName?: string | null; businessAddress?: string | null };
+type JobResponse = JobView;
 
-const POLL_INTERVAL_MS = 2000;
-const MAX_POLL_MS = 120000;
+const TERMINAL_FAILURES: ResolvePhase[] = ['inconclusive', 'failed', 'timeout', 'unavailable', 'worker_unavailable', 'expired', 'rate_limited'];
+const MANUAL_FALLBACK_PHASES: ResolvePhase[] = ['disabled', 'unavailable', 'worker_unavailable', 'expired', 'rate_limited'];
 
-function looksOfficialReview(value: string): boolean {
-  try {
-    const u = new URL(value);
-    if (u.protocol !== 'https:' || u.username || u.password) return false;
-    if (u.hostname === 'search.google.com') return u.pathname === '/local/writereview' && Boolean(u.searchParams.get('placeid'));
-    if (u.hostname === 'g.page') return /^\/r\/[^/]+\/review\/?$/i.test(u.pathname);
-  } catch { /* not a URL */ }
-  return false;
+function sleep(ms: number) {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 export function ActivationForm({ code, source }: { code: string; source: string }) {
@@ -31,9 +36,18 @@ export function ActivationForm({ code, source }: { code: string; source: string 
   const [businesses, setBusinesses] = useState<BusinessResult[]>([]);
   const [resolution, setResolution] = useState<Resolution | null>(null);
   const [verifiedUrl, setVerifiedUrl] = useState(''), [verifiedToken, setVerifiedToken] = useState<string | null>(null);
+  // Identifies the current resolution attempt. Bumping it (start/retry/cancel) makes every older,
+  // still-running poll loop exit, so no stale loop can ever overwrite the state again.
+  const runRef = useRef(0);
 
   function resetVerification() {
+    runRef.current += 1;
     setInspection(null); setInspectError(''); setBusinesses([]); setResolution(null); setVerifiedUrl(''); setVerifiedToken(null);
+  }
+
+  function cancelResolution() {
+    runRef.current += 1;
+    setResolution(null); setInspectBusy(false); setInspectError('');
   }
 
   async function submit(e: FormEvent<HTMLFormElement>) {
@@ -56,8 +70,10 @@ export function ActivationForm({ code, source }: { code: string; source: string 
   }
 
   async function searchBusiness(value: string) {
-    const res = await fetch(`/api/activate?businessSearch=${encodeURIComponent(value)}`, { cache: 'no-store' });
-    const body = await res.json();
+    // Bounded like every other request in this flow: a stalled Places lookup must not leave the
+    // button in "Memproses…" forever.
+    const res = await fetch(`/api/activate?businessSearch=${encodeURIComponent(value)}`, { cache: 'no-store', signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+    const body = await res.json().catch(() => ({}));
     if (!res.ok) throw new Error(body.error || (id ? 'Bisnis tidak bisa dicari.' : 'Could not search for this business.'));
     setBusinesses(body.places as BusinessResult[]); setResolution(null);
   }
@@ -72,51 +88,97 @@ export function ActivationForm({ code, source }: { code: string; source: string 
     setInspectBusy(true); setInspectError(''); setInspection(null); setBusinesses([]); setResolution(null); setVerifiedUrl(''); setVerifiedToken(null);
     try {
       if (!/^https?:\/\//i.test(value)) { await searchBusiness(value); return; }
-      if (looksOfficialReview(value)) { acceptOfficial(value); return; }
+      if (isDirectReviewUrl(value)) { acceptOfficial(value); return; }
       await startResolution(value);
-    } catch (err) { setInspectError(err instanceof Error ? localizedMessage(err.message, language) : t('unexpectedError')); }
+    } catch (err) {
+      const timedOut = err instanceof DOMException && (err.name === 'TimeoutError' || err.name === 'AbortError');
+      setInspectError(timedOut ? t('resolverTimeout') : err instanceof Error ? localizedMessage(err.message, language) : t('unexpectedError'));
+    }
     finally { setInspectBusy(false); }
   }
 
   async function startResolution(url: string) {
+    const run = ++runRef.current;
     const activationCode = (document.querySelector('input[name=activationCode]') as HTMLInputElement | null)?.value || '';
-    const res = await fetch('/api/resolve', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ url, code, activationCode }),
-    });
-    const body = await res.json().catch(() => ({}));
-    if (res.status === 503) { setResolution({ token: '', phase: 'disabled' }); return; }
-    if (res.status === 400) { setResolution({ token: '', phase: 'unsupported' }); return; }
-    if (!res.ok) { setResolution({ token: '', phase: 'failed' }); setInspectError(localizedMessage(body.error || t('resolverFailed'), language)); return; }
+
+    let res: Response;
+    let body: { code?: string; error?: string; jobToken?: string; workerAvailable?: boolean | null } | null;
+    try {
+      res = await fetch('/api/resolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ url, code, activationCode }),
+        signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
+      });
+      body = await res.json().catch(() => null);
+    } catch {
+      if (run === runRef.current) setResolution({ token: '', phase: 'unavailable' });
+      return;
+    }
+    if (run !== runRef.current) return;
+
+    // Every non-200 outcome is terminal: disabled, unsupported, rate limited, not migrated,
+    // failed. The user gets copy plus the manual-activation fallback instead of a spinner.
+    const phase = phaseForResolveResponse(res.status, body);
+    if (phase !== 'resolving') {
+      setResolution({ token: '', phase });
+      if (body?.error && phase !== 'disabled' && phase !== 'rate_limited') setInspectError(localizedMessage(body.error, language));
+      return;
+    }
+    if (!body?.jobToken) { setResolution({ token: '', phase: 'unavailable' }); return; }
+
+    const startedAt = Date.now();
     setResolution({ token: body.jobToken, phase: 'resolving' });
-    await pollResolution(body.jobToken);
+    await pollResolution(body.jobToken, startedAt, run, body.workerAvailable ?? null);
   }
 
-  async function pollResolution(token: string) {
-    const deadline = Date.now() + MAX_POLL_MS;
-    while (Date.now() < deadline) {
-      await new Promise((resolve) => window.setTimeout(resolve, POLL_INTERVAL_MS));
+  async function pollResolution(token: string, startedAt: number, run: number, workerAvailable: boolean | null) {
+    let consecutiveErrors = 0;
+    while (Date.now() - startedAt < MAX_POLL_MS) {
+      if (run !== runRef.current) return;
+      await sleep(POLL_INTERVAL_MS);
+      if (run !== runRef.current) return;
+
       let job: JobResponse;
       try {
-        const res = await fetch(`/api/resolve/${encodeURIComponent(token)}`, { cache: 'no-store' });
-        if (!res.ok) { setResolution({ token, phase: 'unavailable' }); return; }
+        const res = await fetch(`/api/resolve/${encodeURIComponent(token)}`, {
+          cache: 'no-store',
+          signal: AbortSignal.timeout(POLL_REQUEST_TIMEOUT_MS),
+        });
+        if (!res.ok) {
+          // A hard server error (e.g. the resolution tables are missing) is terminal, not a reason
+          // to keep polling for two minutes.
+          setResolution({ token, phase: res.status === 503 ? 'unavailable' : 'failed' });
+          return;
+        }
         job = await res.json();
-      } catch { setResolution({ token, phase: 'unavailable' }); return; }
-
-      if (job.status === 'success') {
-        setResolution({ token, phase: 'success', placeId: job.placeId, reviewUrl: job.reviewUrl, businessName: job.businessName, businessAddress: job.businessAddress });
-        return;
+      } catch {
+        // A single timed-out or dropped poll is retried; three in a row end the attempt.
+        consecutiveErrors += 1;
+        if (run !== runRef.current) return;
+        if (consecutiveErrors >= 3) { setResolution({ token, phase: 'unavailable' }); return; }
+        continue;
       }
-      if (job.status === 'inconclusive') { setResolution({ token, phase: 'inconclusive' }); return; }
-      if (job.status === 'failed' || job.status === 'expired') { setResolution({ token, phase: job.errorCode === 'timeout' ? 'timeout' : 'failed' }); return; }
-      // otherwise keep polling (pending / running)
+      consecutiveErrors = 0;
+
+      const phase = phaseForJob(
+        { ...job, workerAvailable: job.workerAvailable ?? workerAvailable },
+        { elapsedMs: Date.now() - startedAt, consecutiveErrors },
+      );
+      if (phase === 'resolving') continue;
+      if (run !== runRef.current) return;
+      if (phase === 'success') {
+        setResolution({ token, phase, placeId: job.placeId, reviewUrl: job.reviewUrl, businessName: job.businessName, businessAddress: job.businessAddress });
+      } else {
+        setResolution({ token, phase });
+      }
+      return;
     }
-    setResolution({ token, phase: 'timeout' });
+    if (run === runRef.current) setResolution({ token, phase: 'timeout' });
   }
 
   function confirmResolved() {
-    if (!resolution?.reviewUrl) return;
+    if (!resolution?.reviewUrl || !isDirectReviewUrl(resolution.reviewUrl)) return;
     setVerifiedUrl(resolution.reviewUrl); setVerifiedToken(resolution.token);
     setReviewInput(resolution.reviewUrl);
   }
@@ -135,7 +197,7 @@ export function ActivationForm({ code, source }: { code: string; source: string 
     catch { setWriteMessage(id ? 'Gagal menyalin. Tekan lama link lalu pilih Salin.' : 'Copy failed. Long-press the link and choose Copy.'); }
   }
 
-  const resolutionMessage: Record<ResolverPhase, string> = {
+  const resolutionMessage: Record<ResolvePhase, string> = {
     resolving: t('resolvingLink'),
     success: t('verifiedReady'),
     inconclusive: t('resolverInconclusive'),
@@ -144,6 +206,9 @@ export function ActivationForm({ code, source }: { code: string; source: string 
     unsupported: t('resolverUnsupported'),
     timeout: t('resolverTimeout'),
     unavailable: t('resolverUnavailable'),
+    worker_unavailable: t('resolverWorkerUnavailable'),
+    expired: t('resolverExpired'),
+    rate_limited: t('resolverRateLimited'),
   };
 
   const resultText = inspection && (inspection.kind === 'review'
@@ -161,12 +226,14 @@ export function ActivationForm({ code, source }: { code: string; source: string 
       : <form onSubmit={submit} className="form-stack"><label>{t('cardId')}<input value={code} readOnly /></label><label>{id ? 'Kode aktivasi / sandi kartu' : t('activationCodeLabel')}<input name="activationCode" autoComplete="one-time-code" autoCapitalize="characters" spellCheck={false} inputMode="text" minLength={4} maxLength={12} required placeholder={t('codePlaceholder')} /><small className="field-hint">{id ? 'Kode aktivasi baru terdiri dari 4 karakter dan ada di kartu atau CSV dashboard. Kode lama 12 karakter tetap bisa digunakan.' : 'New activation codes have 4 characters and come with the card or dashboard CSV. Previously issued 12-character codes still work.'}</small></label><label>{t('googleReviewUrl')}<input name="reviewURL" type="text" autoComplete="url" required placeholder={id ? 'Tempel link ulasan/Maps atau ketik nama bisnis' : 'Paste a review/Maps link or type a business name'} value={reviewInput} onChange={e => { setReviewInput(e.target.value); resetVerification(); setError(''); }} /><small className="field-hint">{t('pasteOrResolve')}</small></label><button type="button" className="button button-outline" onClick={inspectLink} disabled={inspectBusy || reviewInput.trim().length < 2}>{inspectBusy ? (id ? 'Memproses…' : 'Working…') : (isUrl ? t('resolveMapsLink') : (id ? 'Cari bisnis & buat link ulasan' : 'Find business & generate review link'))}</button>
       {businesses.length > 0 && <div className="form-stack" role="list" aria-label={id ? 'Hasil bisnis Google' : 'Google business results'}>{businesses.map(place => <button type="button" className="button button-outline" key={place.id} onClick={() => { setReviewInput(place.reviewURL); acceptOfficial(place.reviewURL); }}><strong>{place.name}</strong>{place.address && <small className="field-hint">{place.address}</small>}</button>)}</div>}
       {resolution && <div className={resolution.phase === 'success' ? 'success' : 'field-hint'} role="status"><strong>{resolutionMessage[resolution.phase]}</strong>
+        {resolution.phase === 'resolving' && <button type="button" className="button button-outline" onClick={cancelResolution}>{t('resolverCancel')}</button>}
         {resolution.phase === 'success' && <>
           {resolution.businessName && <p>{t('resolvedBusiness')}: <b>{resolution.businessName}</b>{resolution.businessAddress ? <> — {resolution.businessAddress}</> : null}</p>}
           {resolution.reviewUrl && <p>{t('resolvedReviewLink')}: <a href={resolution.reviewUrl} target="_blank" rel="noreferrer">{resolution.reviewUrl}</a></p>}
           {verifiedUrl ? <p className="success" role="status">{t('verifiedReady')}</p> : <button type="button" className="button" onClick={confirmResolved}>{t('confirmLocation')}</button>}
         </>}
-        {(resolution.phase === 'inconclusive' || resolution.phase === 'failed' || resolution.phase === 'timeout' || resolution.phase === 'unavailable') && <button type="button" className="button button-outline" onClick={() => { void inspectLink(); }}>{t('retryResolution')}</button>}
+        {TERMINAL_FAILURES.includes(resolution.phase) && <button type="button" className="button button-outline" onClick={() => { void inspectLink(); }}>{t('retryResolution')}</button>}
+        {MANUAL_FALLBACK_PHASES.includes(resolution.phase) && <p className="field-hint">{t('resolverManualFallback')}</p>}
       </div>}
       {inspection && <div className="success" role="status"><strong>{resultText}</strong>{inspection.kind === 'review' && <p>{t('officialReviewDetected')} <a href={inspection.finalURL} target="_blank" rel="noreferrer">{inspection.finalURL}</a></p>}<small>{id ? 'HP akan membuka aplikasi atau browser berdasarkan link dan pengaturan perangkat.' : 'Your phone opens the app or browser based on the link and device settings.'}</small><button type="button" className="button button-outline" onClick={resetVerification}>{t('changeLink')}</button></div>}
       {inspectError && <p className="error" role="alert">{localizedMessage(inspectError, language)}</p>}{error && <p className="error">{error}</p>}
