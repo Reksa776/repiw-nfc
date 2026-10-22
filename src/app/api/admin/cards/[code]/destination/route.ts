@@ -2,16 +2,17 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db, demo, transaction } from '@/lib/db';
 import { requireAdmin, jsonError, sameOrigin } from '@/lib/http';
-import { getJobByToken, writeAudit } from '@/lib/resolver/jobs';
 import { isOfficialReviewUrl } from '@/lib/resolver/url-policy';
+import { buildReviewUrl } from '@/lib/resolver/extract';
+import { verifyConfirmationToken } from '@/lib/resolver/http-places';
 
 export const runtime = 'nodejs', dynamic = 'force-dynamic';
 
 const schema = z.object({
   reviewURL: z.string().url().max(2048).optional(),
-  resolutionJobToken: z.string().regex(/^[A-Za-z0-9_-]{20,64}$/).optional(),
+  resolverConfirmationToken: z.string().max(4096).optional(),
   confirm: z.boolean().optional(),
-}).refine((v) => Boolean(v.reviewURL || v.resolutionJobToken), { message: 'reviewURL or resolutionJobToken is required' });
+}).refine((v) => Boolean(v.reviewURL || v.resolverConfirmationToken), { message: 'reviewURL or resolverConfirmationToken is required' });
 
 /** Read the current destination and its provenance for a card. */
 export async function GET(_req: NextRequest, ctx: { params: Promise<{ code: string }> }) {
@@ -44,7 +45,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
   try { body = await req.json(); } catch { return jsonError('Format permintaan tidak valid.', 400); }
   const parsed = schema.safeParse(body);
   if (!parsed.success) return jsonError('Data tujuan tidak valid.', 400);
-  const { reviewURL, resolutionJobToken, confirm } = parsed.data;
+  const { reviewURL, resolverConfirmationToken, confirm } = parsed.data;
 
   const [card] = await db.query<{ id: number | string; review_url: string | null; active: number }>(
     'SELECT id,review_url,active FROM cards WHERE code=? AND demo=? LIMIT 1',
@@ -59,17 +60,15 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
   let businessName: string | null = null;
   let businessAddress: string | null = null;
 
-  if (resolutionJobToken) {
-    const job = await getJobByToken(db, resolutionJobToken);
-    if (!job) return jsonError('Hasil resolusi tidak ditemukan.', 400);
-    if (job.status !== 'success' || !job.review_url || !isOfficialReviewUrl(job.review_url)) return jsonError('Hasil resolusi belum berhasil.', 409);
-    if (job.card_code && job.card_code !== code) return jsonError('Hasil resolusi bukan untuk kartu ini.', 403);
-    newUrl = job.review_url;
-    placeId = job.place_id;
-    method = job.method || 'playwright';
-    sourceUrl = job.input_url;
-    businessName = job.business_name;
-    businessAddress = job.business_address;
+  if (resolverConfirmationToken) {
+    const candidate = verifyConfirmationToken(resolverConfirmationToken, code);
+    if (!candidate) return jsonError('Konfirmasi bisnis tidak valid atau sudah kedaluwarsa. Cari ulang bisnis.', 409);
+    newUrl = buildReviewUrl(candidate.placeId);
+    placeId = candidate.placeId;
+    method = 'google-places-ids-only';
+    sourceUrl = candidate.sourceUrl;
+    businessName = candidate.query;
+    businessAddress = null;
   } else if (!isOfficialReviewUrl(newUrl)) {
     return jsonError('Gunakan tautan Google Review langsung atau hasil resolusi otomatis.', 400);
   }
@@ -86,15 +85,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
       `UPDATE cards SET review_url=?,place_id=?,source_url=?,resolution_status='verified',resolution_method=?,resolved_at=CURRENT_TIMESTAMP,resolved_business_name=?,resolved_business_address=? WHERE id=?`,
       [newUrl, placeId, sourceUrl, method, businessName, businessAddress, card.id],
     );
-    await writeAudit(tx, {
-      actor: 'admin',
-      action: 'destination.update',
-      cardCode: code,
-      oldUrl: card.review_url,
-      newUrl,
-      placeId,
-      detail: `method=${method}`,
-    });
+    await tx.execute('INSERT INTO resolution_audit(actor,action,card_code,old_url,new_url,place_id,detail) VALUES(?,?,?,?,?,?,?)',
+      ['admin', 'destination.update', code, card.review_url, newUrl, placeId, `method=${method}`]);
   });
 
   return NextResponse.json({ ok: true, cardCode: code, oldUrl: card.review_url, newUrl, placeId }, { headers: { 'Cache-Control': 'no-store' } });

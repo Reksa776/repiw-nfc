@@ -1,7 +1,6 @@
-// Wait until the target PostgreSQL has the core schema applied, then exit 0.
+// Wait until core application tables exist, then exit 0.
 //
-// Used by the end-to-end Playwright setup: one server runs the migrations, a second server must
-// not start serving (or race the migration) until the tables exist.
+// Used by isolated E2E setup to ensure app tables are migrated before tests begin.
 //
 //   DATABASE_URL=postgresql://... node scripts/wait-for-db.js [timeoutSeconds]
 
@@ -19,10 +18,10 @@ async function main() {
     while (Date.now() < deadline) {
       try {
         const { rows } = await pool.query(
-          "SELECT to_regclass('public.cards') AS cards, to_regclass('public.rate_events') AS rate_events, to_regclass('public.resolution_jobs') AS resolution_jobs",
+          "SELECT to_regclass('public.cards') AS cards, to_regclass('public.rate_events') AS rate_events",
         );
         const row = rows[0] || {};
-        if (row.cards && row.rate_events && row.resolution_jobs) {
+        if (row.cards && row.rate_events) {
           console.log('[wait-for-db] schema is ready');
           return;
         }

@@ -8,7 +8,7 @@ import {test,expect} from '@playwright/test';
 // language, so asserting on translated strings made this spec fail whenever the UI was Indonesian.
 
 test('admin generation, activation, NFC tracking, demo, and mobile layout',async({page})=>{
- // One dedicated rate-limit bucket for this spec so it never races the resolver specs.
+ // One dedicated rate-limit bucket for this spec so rate-limit assertions stay isolated.
  await page.setExtraHTTPHeaders({'x-forwarded-for':'198.51.100.250'});
  await page.goto('/admin');
  await page.locator('input[autocomplete=username]').fill('admin');

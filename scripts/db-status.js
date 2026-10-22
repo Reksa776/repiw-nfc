@@ -2,14 +2,12 @@
 //
 //   npm run db:status
 //
-// Prints: schema version, resolver table presence, card counts and worker heartbeats.
-// Exit code 0 only when the database is ready for the automatic resolver (schema version >= 8).
+// Prints: schema version, provenance readiness, and card counts. Never inspects credentials.
+// Exit code 0 when card provenance columns for the HTTP/Places resolver are available.
 // No connection string, host, user or password is ever printed.
 
 require('dotenv').config();
 const { Pool } = require('pg');
-
-const REQUIRED_VERSION = 8;
 
 async function main() {
   if (!process.env.DATABASE_URL) {
@@ -27,10 +25,8 @@ async function main() {
       .catch((error) => (error.code === '42P01' ? { rows: [{ version: 0 }] } : Promise.reject(error)));
     const schemaVersion = Number(version.rows[0].version);
 
-    const tables = await pool.query(
-      "SELECT table_name FROM information_schema.tables WHERE table_schema='public' AND table_name IN ('resolution_jobs','resolution_audit','resolver_workers')",
-    );
-    const present = new Set(tables.rows.map((r) => r.table_name));
+    const provenance = await pool.query("SELECT column_name FROM information_schema.columns WHERE table_schema='public' AND table_name='cards' AND column_name IN ('place_id','source_url','resolution_status','resolution_method')");
+    const present = new Set(provenance.rows.map((r) => r.column_name));
 
     let cards = { total: null, active: null };
     try {
@@ -40,40 +36,19 @@ async function main() {
       /* pre-initial database */
     }
 
-    let jobs = null;
-    let workers = null;
-    if (present.has('resolution_jobs')) {
-      const r = await pool.query(
-        "SELECT COUNT(*) FILTER (WHERE status='pending') AS pending, COUNT(*) FILTER (WHERE status='running') AS running, COUNT(*) AS total FROM resolution_jobs",
-      );
-      jobs = { pending: Number(r.rows[0].pending), running: Number(r.rows[0].running), total: Number(r.rows[0].total) };
-    }
-    if (present.has('resolver_workers')) {
-      const r = await pool.query(
-        'SELECT COUNT(*) AS workers, MAX(last_seen_at) AS last_seen_at, ROUND(EXTRACT(EPOCH FROM (CURRENT_TIMESTAMP - MAX(last_seen_at)))) AS age_seconds FROM resolver_workers',
-      );
-      const age = r.rows[0].age_seconds === null ? null : Number(r.rows[0].age_seconds);
-      workers = { registered: Number(r.rows[0].workers), last_seen_seconds_ago: age, live: age !== null && age <= 30 };
-    }
-
-    const ready = schemaVersion >= REQUIRED_VERSION && present.has('resolution_jobs') && present.has('resolver_workers');
+    const requiredColumns = ['place_id', 'source_url', 'resolution_status', 'resolution_method'];
+    const ready = schemaVersion >= 6 && requiredColumns.every((column) => present.has(column));
     const report = {
       ok: ready,
       database: dbinfo.rows[0].database,
       schema: dbinfo.rows[0].schema,
       schemaVersion,
-      requiredVersion: REQUIRED_VERSION,
-      resolverTables: {
-        resolution_jobs: present.has('resolution_jobs'),
-        resolution_audit: present.has('resolution_audit'),
-        resolver_workers: present.has('resolver_workers'),
-      },
+      requiredVersion: 6,
+      provenanceColumns: Object.fromEntries(requiredColumns.map((column) => [column, present.has(column)])),
       cards,
-      jobs,
-      workers,
       note: ready
-        ? 'Schema is ready. The resolver still stays disabled until PLAYWRIGHT_RESOLVER_ENABLED=1 is approved.'
-        : 'Schema is NOT ready: apply migrations 1-8 with `npm run db:migrate` during an approved maintenance window.',
+        ? 'Provenance schema is ready. Google Places resolution remains disabled unless GOOGLE_PLACES_RESOLVER_ENABLED=1.'
+        : 'Schema is NOT ready: back up the database and apply migrations with `npm run db:migrate` in an approved release step.',
     };
     console.log(JSON.stringify(report, null, 2));
     process.exit(ready ? 0 : 1);
