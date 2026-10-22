@@ -10,19 +10,13 @@
     "start": "next start",
     "test": "vitest run tests",
     "test:e2e": "playwright test",
-    "test:e2e:live": "RESOLVER_LIVE=1 playwright test e2e/live-resolver.spec.ts",
     "db:dev": "tsx scripts/dev-pglite-server.ts 5433",
     "migrate:sqlite": "node scripts/migrate-sqlite.js",
     "db:migrate": "node scripts/migrate-postgres.js",
     "db:seed": "node scripts/admin-account.js",
     "db:import-sqlite": "node scripts/migrate-sqlite-to-postgres.js",
     "db:import-mysql": "node scripts/migrate-mysql-to-postgres.js",
-    "e2e:seed": "node scripts/seed-e2e-admin.js",
-    "resolver:worker": "tsx scripts/resolver-worker.ts",
-    "resolver:worker:check": "tsx scripts/resolver-worker.ts --check",
-    "resolver:worker:config": "tsx scripts/resolver-worker.ts --print-config",
-    "resolver:probe": "tsx scripts/resolver-probe.ts",
-    "resolver:backfill": "tsx scripts/backfill-destinations.ts"
+    "e2e:seed": "node scripts/seed-e2e-admin.js"
   },
   "engines": {
     "node": ">=22.5.0"
@@ -32,7 +26,6 @@
     "dotenv": "^16.4.7",
     "next": "^16.0.0",
     "pg": "^8.23.1",
-    "playwright-core": "^1.55.0",
     "qrcode": "^1.5.4",
     "react": "^19.0.0",
     "react-dom": "^19.0.0",

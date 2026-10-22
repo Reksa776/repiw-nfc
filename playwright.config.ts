@@ -23,14 +23,6 @@ export default defineConfig({
  // not run concurrently against it.
  workers:1,
  use:{baseURL:'http://127.0.0.1:3182',trace:'retain-on-failure',launchOptions:{executablePath:'/usr/bin/google-chrome',args:['--no-sandbox']},...devices['Desktop Chrome']},
- // Two app servers:
- //  3182 - resolver ENABLED, runs the migrations, serves the main flows + resolver API specs.
- //  3183 - resolver DISABLED (the production default), serves the kill-switch behaviour spec.
- // Both point at the same test database; only 3182 migrates so the two never race DDL.
- webServer:[
-  {command:'node scripts/migrate-postgres.js && node scripts/seed-e2e-admin.js && npm run dev -- --hostname 127.0.0.1 --port 3182',url:'http://127.0.0.1:3182',reuseExistingServer:!process.env.CI,timeout:120_000,
-   env:{...commonEnv,PORT:'3182',BASE_URL:'http://127.0.0.1:3182',REPIW_NEXT_DIST_DIR:'.next-e2e',PLAYWRIGHT_RESOLVER_ENABLED:'1',RESOLVER_TIMEOUT_MS:'45000',RESOLVER_MAX_CONCURRENCY:'1',RESOLVER_HEADLESS:'true'}},
-  {command:'node scripts/wait-for-db.js && npm run dev -- --hostname 127.0.0.1 --port 3183',url:'http://127.0.0.1:3183',reuseExistingServer:!process.env.CI,timeout:120_000,
-   env:{...commonEnv,PORT:'3183',BASE_URL:'http://127.0.0.1:3183',REPIW_NEXT_DIST_DIR:'.next-e2e-disabled'}},
- ]
+ webServer:{command:'node scripts/migrate-postgres.js && node scripts/seed-e2e-admin.js && npm run dev -- --hostname 127.0.0.1 --port 3182',url:'http://127.0.0.1:3182',reuseExistingServer:!process.env.CI,timeout:120_000,
+  env:{...commonEnv,PORT:'3182',BASE_URL:'http://127.0.0.1:3182',REPIW_NEXT_DIST_DIR:'.next-e2e',GOOGLE_PLACES_RESOLVER_ENABLED:'1',GOOGLE_PLACES_API_KEY:''}}
 });

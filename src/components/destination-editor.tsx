@@ -1,31 +1,21 @@
 'use client';
 
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { localizedMessage, useLanguage } from '@/lib/i18n';
 import {
-  MAX_POLL_MS,
-  POLL_INTERVAL_MS,
-  POLL_REQUEST_TIMEOUT_MS,
   REQUEST_TIMEOUT_MS,
   isDirectReviewUrl,
-  phaseForJob,
-  phaseForResolveResponse,
-  type JobView,
   type ResolutionPhase,
 } from '@/lib/resolver/client-state';
 
 // `verified` is the editor's own success state: the destination is ready to preview.
 type Phase = ResolutionPhase | 'verified';
-type JobResponse = JobView;
+type Candidate = { placeId: string; reviewURL: string; mapsURL: string; confirmationToken: string };
 type Preview = { oldUrl: string | null; newUrl: string; placeId: string | null; method: string; businessName: string | null; businessAddress: string | null };
 type CardDestination = { code: string; active: number; review_url: string | null; place_id: string | null; source_url: string | null; resolution_status: string | null; resolution_method: string | null; resolved_business_name: string | null; resolved_business_address: string | null };
 
-const RETRY_PHASES: Phase[] = ['inconclusive', 'failed', 'timeout', 'unavailable', 'worker_unavailable', 'expired', 'rate_limited'];
-const FALLBACK_PHASES: Phase[] = ['disabled', 'unavailable', 'worker_unavailable', 'expired', 'rate_limited'];
-
-function sleep(ms: number) {
-  return new Promise((done) => window.setTimeout(done, ms));
-}
+const RETRY_PHASES: Phase[] = ['inconclusive', 'failed', 'timeout', 'unavailable', 'rate_limited'];
+const FALLBACK_PHASES: Phase[] = ['disabled', 'unavailable', 'rate_limited'];
 
 /**
  * Re-point an already-activated card at a verified Google Review destination without deleting the
@@ -38,14 +28,14 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
   const [current, setCurrent] = useState<CardDestination | null>(null);
   const [input, setInput] = useState('');
   const [phase, setPhase] = useState<Phase>('idle');
-  const [jobToken, setJobToken] = useState<string | null>(null);
+  const [confirmationToken, setConfirmationToken] = useState<string | null>(null);
+  const [candidates, setCandidates] = useState<Candidate[]>([]);
   const [resolvedUrl, setResolvedUrl] = useState('');
   const [businessName, setBusinessName] = useState<string | null>(null);
   const [businessAddress, setBusinessAddress] = useState<string | null>(null);
   const [preview, setPreview] = useState<Preview | null>(null);
   const [message, setMessage] = useState('');
   const [busy, setBusy] = useState(false);
-  const runRef = useRef(0);
 
   useEffect(() => {
     let active = true;
@@ -59,12 +49,10 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
   const currentUrl = current?.review_url ?? null;
 
   function resetVerification() {
-    runRef.current += 1;
-    setPhase('idle'); setJobToken(null); setResolvedUrl(''); setBusinessName(null); setBusinessAddress(null); setPreview(null); setMessage('');
+    setPhase('idle'); setConfirmationToken(null); setCandidates([]); setResolvedUrl(''); setBusinessName(null); setBusinessAddress(null); setPreview(null); setMessage('');
   }
 
   function cancelResolution() {
-    runRef.current += 1;
     setPhase('idle'); setMessage('');
   }
 
@@ -72,81 +60,24 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
     const value = input.trim();
     setMessage(''); setPreview(null);
     if (!value) return;
-    const run = ++runRef.current;
     if (isDirectReviewUrl(value)) {
       // A direct review link needs no server resolution; it still goes through the same preview.
-      setResolvedUrl(value); setJobToken(null); setPhase('verified');
+      setResolvedUrl(value); setConfirmationToken(null); setPhase('verified');
       await requestPreview({ reviewURL: value });
       return;
     }
     setPhase('resolving'); setBusy(true);
     try {
-      let res: Response;
-      try {
-        res = await fetch('/api/resolve', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ url: value, cardCode: code }),
-          signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
-        });
-      } catch {
-        if (run === runRef.current) setPhase('unavailable');
-        return;
-      }
-      const body = await res.json().catch(() => null);
-      if (run !== runRef.current) return;
-      const nextPhase = phaseForResolveResponse(res.status, body);
-      if (nextPhase !== 'resolving') {
-        setPhase(nextPhase);
-        if (body?.error && nextPhase !== 'disabled' && nextPhase !== 'rate_limited') setMessage(localizedMessage(body.error, language));
-        return;
-      }
-      if (!body?.jobToken) { setPhase('unavailable'); return; }
-      await poll(body.jobToken, Date.now(), run, body.workerAvailable ?? null);
-    } finally { setBusy(false); }
+      const res = await fetch('/api/resolve', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ input: value, cardCode: code }), signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS) });
+      const body = await res.json().catch(() => ({})) as { error?: string; candidates?: Candidate[]; query?: string };
+      if (!res.ok) { setPhase(res.status === 503 ? 'disabled' : res.status === 429 ? 'rate_limited' : 'failed'); setMessage(body.error || t('resolverFailed')); return; }
+      setCandidates(body.candidates ?? []); setBusinessName(body.query ?? null); setPhase((body.candidates?.length ?? 0) ? 'success' : 'inconclusive');
+      if (!body.candidates?.length) setMessage(id ? 'Google Places tidak menemukan kandidat.' : 'Google Places returned no candidates.');
+    } catch (error) { setPhase('unavailable'); setMessage(error instanceof Error ? error.message : t('resolverUnavailable')); }
+    finally { setBusy(false); }
   }
 
-  async function poll(token: string, startedAt: number, run: number, workerAvailable: boolean | null) {
-    let consecutiveErrors = 0;
-    while (Date.now() - startedAt < MAX_POLL_MS) {
-      if (run !== runRef.current) return;
-      await sleep(POLL_INTERVAL_MS);
-      if (run !== runRef.current) return;
-
-      let job: JobResponse;
-      try {
-        const res = await fetch(`/api/resolve/${encodeURIComponent(token)}`, {
-          cache: 'no-store',
-          signal: AbortSignal.timeout(POLL_REQUEST_TIMEOUT_MS),
-        });
-        if (!res.ok) { setPhase(res.status === 503 ? 'unavailable' : 'failed'); return; }
-        job = await res.json();
-      } catch {
-        consecutiveErrors += 1;
-        if (run !== runRef.current) return;
-        if (consecutiveErrors >= 3) { setPhase('unavailable'); return; }
-        continue;
-      }
-      consecutiveErrors = 0;
-
-      const nextPhase = phaseForJob(
-        { ...job, workerAvailable: job.workerAvailable ?? workerAvailable },
-        { elapsedMs: Date.now() - startedAt, consecutiveErrors },
-      );
-      if (nextPhase === 'resolving') continue;
-      if (run !== runRef.current) return;
-      if (nextPhase === 'success') {
-        setJobToken(token); setResolvedUrl(job.reviewUrl ?? ''); setBusinessName(job.businessName ?? null); setBusinessAddress(job.businessAddress ?? null); setPhase('verified');
-        await requestPreview({ resolutionJobToken: token });
-        return;
-      }
-      setPhase(nextPhase);
-      return;
-    }
-    if (run === runRef.current) setPhase('timeout');
-  }
-
-  async function requestPreview(body: { reviewURL?: string; resolutionJobToken?: string }): Promise<boolean> {
+  async function requestPreview(body: { reviewURL?: string; resolverConfirmationToken?: string }): Promise<boolean> {
     setBusy(true); setMessage('');
     try {
       const res = await fetch(`/api/admin/cards/${code}/destination`, {
@@ -172,7 +103,7 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
       const res = await fetch(`/api/admin/cards/${code}/destination`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(jobToken ? { resolutionJobToken: jobToken, confirm: true } : { reviewURL: preview.newUrl, confirm: true }),
+        body: JSON.stringify(confirmationToken ? { resolverConfirmationToken: confirmationToken, confirm: true } : { reviewURL: preview.newUrl, confirm: true }),
         signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
       });
       const data = await res.json().catch(() => ({}));
@@ -187,15 +118,13 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
     idle: '',
     verified: t('verifiedReady'),
     resolving: t('resolvingLink'),
-    success: t('verifiedReady'),
+    success: id ? 'Kandidat Place ID ditemukan; periksa bisnis di Maps di bawah.' : 'Place ID candidates found; verify the business in Maps below.',
     inconclusive: t('resolverInconclusive'),
     failed: t('resolverFailed'),
     disabled: t('resolverDisabled'),
     unsupported: t('resolverUnsupported'),
     timeout: t('resolverTimeout'),
     unavailable: t('resolverUnavailable'),
-    worker_unavailable: t('resolverWorkerUnavailable'),
-    expired: t('resolverExpired'),
     rate_limited: t('resolverRateLimited'),
   };
   const canResolve = !busy && phase !== 'resolving' && input.trim().length >= 2;
@@ -217,6 +146,7 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
       {RETRY_PHASES.includes(phase) && <button type="button" className="button button-outline" onClick={() => { void resolve(); }}>{t('retryResolution')}</button>}
       {FALLBACK_PHASES.includes(phase) && <p className="field-hint">{t('resolverManualFallback')}</p>}
     </div>}
+    {candidates.length > 0 && <div className="form-stack"><p className="field-hint">{id ? 'Hasil berisi Place ID saja. Buka tiap kandidat di Maps untuk memeriksa nama dan alamat; Places API IDs Only tidak memberikan nama bisnis.' : 'Results contain Place IDs only. Open each candidate in Maps to verify its name and address; Places API IDs Only does not return business names.'}</p>{candidates.map((candidate) => <div className="panel" key={candidate.placeId}><p><b>Place ID:</b> <code>{candidate.placeId}</code></p><a href={candidate.mapsURL} target="_blank" rel="noreferrer">{id ? 'Buka kandidat di Google Maps ↗' : 'Open candidate in Google Maps ↗'}</a><button type="button" className="button button-outline" disabled={busy} onClick={async () => { setConfirmationToken(candidate.confirmationToken); setResolvedUrl(candidate.reviewURL); setPhase('verified'); await requestPreview({ resolverConfirmationToken: candidate.confirmationToken }); }}>{id ? 'Ini bisnis yang benar' : 'This is the correct business'}</button></div>)}</div>}
     {phase === 'resolving' && <div className="field-hint" role="status"><strong>{t('resolvingLink')}</strong><button type="button" className="button button-outline" onClick={cancelResolution}>{t('resolverCancel')}</button></div>}
     {preview && <div className="panel destination-preview">
       <p className="eyebrow">{t('destPreview')}</p>
