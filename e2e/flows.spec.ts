@@ -26,15 +26,15 @@ test('admin generation, activation, NFC tracking, demo, and mobile layout',async
  const png=await page.request.get(`/api/admin/qr/${item.code}`);expect(png.status()).toBe(200);expect(png.headers()['content-type']).toContain('image/png');
  const zip=await page.request.get('/api/admin/qr-zip');expect(zip.status()).toBe(200);expect((await zip.body()).subarray(0,2).toString()).toBe('PK');
  const invalidCode=await page.request.post('/api/activate',{data:{code:'RP-0000000000',activationCode:'1234567890AB',reviewURL:'https://g.page/r/example/review'}});expect(invalidCode.status()).toBe(404);
- const unsafeUrl=await page.request.post('/api/activate',{data:{code:item.code,activationCode:item.activationCode,reviewURL:'https://attacker.example/review'}});expect(unsafeUrl.status()).toBe(400);
+ const unsafeUrl=await page.request.post('/api/activate',{data:{code:item.code,activationCode:item.activationCode,reviewURL:'javascript:alert(1)'}});expect(unsafeUrl.status()).toBe(400);
  const wrongSecret=await page.request.post('/api/activate',{data:{code:item.code,activationCode:'000000000000',reviewURL:'https://g.page/r/repiw-e2e/review'}});expect(wrongSecret.status()).toBe(401);
- await page.goto(`/c/${item.code}?src=qr`);await page.locator('input[name=activationCode]').fill(item.activationCode);await page.locator('input[name=reviewURL]').fill('https://g.page/r/repiw-e2e/review');
+ await page.goto(`/c/${item.code}?src=qr`);await page.locator('input[name=activationCode]').fill(item.activationCode);await page.locator('input[name=reviewURL]').fill('https://example.com/repiw-e2e');
  // A direct Google review link is verified in the browser (no server call) and only then does the
  // activation button unlock; the submit button is the form's last direct-child button.
  await page.locator('form.form-stack > button').first().click();
  const submitButton=page.locator('form.form-stack > button').last();await expect(submitButton).toBeEnabled();await submitButton.click();
  await expect(page.locator('.success').filter({hasText:item.code}).first()).toBeVisible();
- const repeated=await page.request.post('/api/activate',{data:{code:item.code,activationCode:item.activationCode,reviewURL:'https://g.page/r/repiw-e2e/review'}});expect(repeated.status()).toBe(409);
+ const repeated=await page.request.post('/api/activate',{data:{code:item.code,activationCode:item.activationCode,reviewURL:'https://example.com/repiw-e2e'}});expect(repeated.status()).toBe(409);
  await page.goto(`/c/${item.code}?src=qr`);await expect(page).toHaveURL(new RegExp(`/demo-review\\?card=${item.code}&src=qr`));
  await page.goto(`/c/${item.code}?src=nfc`);await expect(page).toHaveURL(new RegExp(`/demo-review\\?card=${item.code}&src=nfc`));
  const stats=await page.request.get('/api/admin/stats').then(r=>r.json());expect(stats.qr).toBeGreaterThanOrEqual(1);expect(stats.nfc).toBeGreaterThanOrEqual(1);expect(stats.active).toBeGreaterThanOrEqual(1);

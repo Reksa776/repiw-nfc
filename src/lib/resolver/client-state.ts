@@ -12,6 +12,14 @@ export function isDirectReviewUrl(value: string | null | undefined): boolean {
   } catch { return false; }
 }
 
+export function isWebDestinationUrl(value: string | null | undefined): boolean {
+  if (!value) return false;
+  try {
+    const url = new URL(value);
+    return ['http:', 'https:'].includes(url.protocol) && Boolean(url.hostname) && !url.username && !url.password;
+  } catch { return false; }
+}
+
 export function phaseForResolveResponse(status: number, body: { code?: string | null } | null | undefined): Exclude<ResolutionPhase, 'idle'> {
   switch (body?.code) {
     case 'resolver_disabled': return 'disabled';

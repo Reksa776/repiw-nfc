@@ -22,6 +22,13 @@ export function validReviewURL(value: string) {
   }
   catch { return false; }
 }
+/** A card destination may be any normal web URL; never allow script or credential-bearing URLs. */
+export function validDestinationURL(value: string) {
+  try {
+    const url = new URL(value);
+    return ['https:', 'http:'].includes(url.protocol) && Boolean(url.hostname) && !url.username && !url.password;
+  } catch { return false; }
+}
 export function safeBaseURL() {
   const base = process.env.BASE_URL || `http://localhost:${process.env.PORT || 3000}`;
   const u = new URL(base);

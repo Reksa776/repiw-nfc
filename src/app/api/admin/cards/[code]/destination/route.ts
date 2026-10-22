@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { z } from 'zod';
 import { db, demo, transaction } from '@/lib/db';
 import { requireAdmin, jsonError, sameOrigin } from '@/lib/http';
-import { isOfficialReviewUrl } from '@/lib/resolver/url-policy';
+import { validDestinationURL } from '@/lib/validation';
 import { buildReviewUrl } from '@/lib/resolver/extract';
 import { verifyConfirmationToken } from '@/lib/resolver/http-places';
 
@@ -29,7 +29,7 @@ export async function GET(_req: NextRequest, ctx: { params: Promise<{ code: stri
 }
 
 /**
- * Non-destructively update an existing card's review destination.
+ * Non-destructively update an existing card's web destination.
  *
  * Unlike reactivation, this keeps the card's public code, its active state, its activation
  * history, and its visit analytics intact. It requires explicit confirmation: without
@@ -69,8 +69,8 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
     sourceUrl = candidate.sourceUrl;
     businessName = candidate.query;
     businessAddress = null;
-  } else if (!isOfficialReviewUrl(newUrl)) {
-    return jsonError('Gunakan tautan Google Review langsung atau hasil resolusi otomatis.', 400);
+  } else if (!validDestinationURL(newUrl)) {
+    return jsonError('Masukkan link tujuan HTTP atau HTTPS yang valid.', 400);
   }
 
   if (!confirm) {
