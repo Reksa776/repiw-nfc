@@ -4,7 +4,7 @@ import { useEffect, useState } from 'react';
 import { localizedMessage, useLanguage } from '@/lib/i18n';
 import {
   REQUEST_TIMEOUT_MS,
-  isDirectReviewUrl,
+  isWebDestinationUrl,
   type ResolutionPhase,
 } from '@/lib/resolver/client-state';
 
@@ -18,7 +18,7 @@ const RETRY_PHASES: Phase[] = ['inconclusive', 'failed', 'timeout', 'unavailable
 const FALLBACK_PHASES: Phase[] = ['disabled', 'unavailable', 'rate_limited'];
 
 /**
- * Re-point an already-activated card at a verified Google Review destination without deleting the
+ * Re-point an already-activated card at a new web destination without deleting the
  * card, changing its public code, resetting activation, or losing visit analytics. Nothing is
  * written until the administrator confirms the preview of the old and new URL.
  */
@@ -60,8 +60,8 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
     const value = input.trim();
     setMessage(''); setPreview(null);
     if (!value) return;
-    if (isDirectReviewUrl(value)) {
-      // A direct review link needs no server resolution; it still goes through the same preview.
+    if (isWebDestinationUrl(value)) {
+      // A direct destination needs no server resolution; it still goes through the same preview.
       setResolvedUrl(value); setConfirmationToken(null); setPhase('verified');
       await requestPreview({ reviewURL: value });
       return;
@@ -135,8 +135,8 @@ export function DestinationEditor({ code, onSaved, onClose }: { code: string; on
     <p className="muted">{t('destEditorHint')}</p>
     <p className="field-hint">{t('destCurrent')}: <code>{currentUrl || '—'}</code></p>
     {current?.resolved_business_name && <p className="fine-print">{t('resolvedBusiness')}: {current.resolved_business_name}{current.resolved_business_address ? ` — ${current.resolved_business_address}` : ''} ({current.resolution_method || 'legacy'})</p>}
-    <label>{t('googleReviewUrl')}<input type="text" value={input} placeholder={id ? 'Tempel tautan Maps atau tautan ulasan Google' : 'Paste a Maps link or a Google review link'} onChange={(e) => { setInput(e.target.value); resetVerification(); }} /></label>
-    <p className="fine-print">{t('destManualHint')}</p>
+    <label>{id ? 'Link tujuan' : 'Destination URL'}<input type="text" value={input} placeholder={id ? 'Tempel link tujuan, mis. https://contoh.com' : 'Paste a destination link, e.g. https://example.com'} onChange={(e) => { setInput(e.target.value); resetVerification(); }} /></label>
+    <p className="fine-print">{id ? 'Tempel link tujuan HTTP atau HTTPS apa pun.' : 'Paste any valid HTTP or HTTPS destination URL.'}</p>
     <button type="button" className="button button-outline destination-resolve" disabled={!canResolve} onClick={() => { void resolve(); }}>{busy && phase === 'resolving' ? (id ? 'Memproses…' : 'Working…') : t('resolveMapsLink')}</button>
     {phase !== 'idle' && phase !== 'resolving' && <div className={phase === 'verified' ? 'success' : 'field-hint'} role="status"><strong>{phaseMessage[phase]}</strong>
       {phase === 'verified' && <>

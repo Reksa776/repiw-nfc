@@ -34,7 +34,7 @@ Open `http://localhost:3000`. With the sample development settings, admin passwo
 | `/api/admin/qr/:code`, `/api/admin/qr-zip` | Download a QR PNG or a ZIP of QR PNGs |
 | `/api/activate` | Validate and consume a one-time activation code |
 
-New card codes, activation codes, and QR/NFC URLs appear after card generation. Download the CSV immediately: activation codes are intentionally never retrievable from the database. QR images encode the `?src=qr` URL; write the matching `?src=nfc` URL to the NFC chip. During activation, paste the business's Google review link copied from Google Business Profile; REPIW does not generate or rewrite Google links. Each active scan records its source and redirects to that exact validated URL. Demo cards redirect to the local simulation.
+New card codes, activation codes, and QR/NFC URLs appear after card generation. Download the CSV immediately: activation codes are intentionally never retrievable from the database. QR images encode the `?src=qr` URL; write the matching `?src=nfc` URL to the NFC chip. Activation accepts any valid HTTP or HTTPS destination link and saves it to the card. Each active scan records its source and redirects to that URL. Demo cards redirect to the local simulation.
 
 ## Production configuration
 

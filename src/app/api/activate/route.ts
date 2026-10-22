@@ -1,9 +1,8 @@
 import { NextRequest,NextResponse } from 'next/server';
-import { activationSchema,validReviewURL } from '@/lib/validation';
+import { activationSchema,validDestinationURL,validReviewURL } from '@/lib/validation';
 import { jsonError,enforceRateLimit,sameOrigin } from '@/lib/http';
 import { db,sha256,transaction } from '@/lib/db';
 import { verifyActivationCode } from '@/lib/security';
-import { isOfficialReviewUrl } from '@/lib/resolver/url-policy';
 import { buildReviewUrl } from '@/lib/resolver/extract';
 import { verifyConfirmationToken } from '@/lib/resolver/http-places';
 export const runtime='nodejs';
@@ -45,10 +44,10 @@ export async function POST(req:NextRequest) {
   let body:unknown;try{body=await req.json()}catch{return jsonError('Format permintaan tidak valid.',400)}
   const parsed=activationSchema.safeParse(body);if(!parsed.success)return jsonError('Data aktivasi tidak valid.',400);
   const {code,activationCode,reviewURL,resolverConfirmationToken}=parsed.data;
+  if(!validDestinationURL(reviewURL))return jsonError('Masukkan link tujuan HTTP atau HTTPS yang valid.',400);
 
-  // Determine the destination. A card may be activated either with a direct official Google
-  // review URL (unchanged manual flow) or with the verified output of a completed resolution
-  // job. A raw Maps/share link is NEVER stored as if it were a verified review URL.
+  // Manual activation accepts any safe web destination. When a resolver confirmation token is
+  // present, require that its generated Google review URL matches the submitted destination.
   let finalReviewUrl = reviewURL;
   let provenance: { placeId: string | null; method: string; sourceUrl: string | null; businessName: string | null; businessAddress: string | null } = {
     placeId: null, method: 'manual', sourceUrl: null, businessName: null, businessAddress: null,
@@ -60,8 +59,6 @@ export async function POST(req:NextRequest) {
     finalReviewUrl = buildReviewUrl(confirmation.placeId);
     if (reviewURL !== finalReviewUrl) return jsonError('Tautan tidak cocok dengan hasil pencarian Google Places.', 400);
     provenance = { placeId: confirmation.placeId, method: 'google-places-ids-only', sourceUrl: confirmation.sourceUrl, businessName: confirmation.query, businessAddress: null };
-  } else if (!isOfficialReviewUrl(reviewURL)) {
-    return jsonError('Gunakan tautan Google Review langsung atau hasil yang sudah dikonfirmasi dari Google Places.', 400);
   }
 
   const outcome=await transaction(async(tx)=>{
