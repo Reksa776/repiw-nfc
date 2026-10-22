@@ -1,78 +1,82 @@
-# REPIW V1 · Next.js + Supabase
+# REPIW V1 · Next.js
 
-REPIW manages Google Review NFC/QR cards, one-time activation codes, scan tracking, exports, and an admin workspace. The current responsive UI, Indonesian/English setting, loading transitions, dashboard, and demo flow are kept. The app now connects to Supabase PostgreSQL from server-side code through `pg`.
+REPIW manages Google Review cards that customers reach through a QR code or NFC tap. This version uses Next.js App Router, React, TypeScript, route handlers, and SQLite.
 
-## Connect Supabase
+## Migration status
 
-1. In Supabase, create or open your project, click **Connect**, and copy the PostgreSQL connection URI. Use the connection mode that matches your host. Do not construct the host or username manually; copy the complete URI. See the [Supabase connection guide](https://supabase.com/docs/guides/database/connecting-to-postgres).
-2. Copy `.env.example` to `.env`. Paste the URI into `DATABASE_URL`, replace the password placeholder if present, and URL-encode special characters in the password. Keep it private; never prefix it with `NEXT_PUBLIC_`.
-3. Set `SESSION_SECRET` to at least 32 random bytes. For local use, keep `BASE_URL=http://localhost:3000` and `DEMO_MODE=true`.
-4. Run these from the project directory:
+The current Next.js implementation is a migration from the Express source formerly in this folder. It preserves the existing card and visit tables and adds session/rate-limit tables. Existing SHA-256 activation-code hashes remain usable once, then are replaced when the card is activated. New activation codes use salted scrypt hashes.
 
-   ```sh
-   npm install
-   npm run db:migrate
-   npm run db:seed -- admin
-   npm run dev
-   ```
+This is a verified migration candidate, not a blanket production-readiness claim. See `MIGRATION-PLAN.md` for audit notes, acceptance criteria, deployment constraints, and cutover steps. Check the test results from the environment where this app is built and deployed.
 
-The seed asks for the admin password twice without displaying it; use at least 8 characters. Open `http://localhost:3000/admin` and sign in as `admin`. To use a different username, pass it after `--`, for example `npm run db:seed -- reksa`.
+## Requirements and local setup
 
-`npm run db:migrate` is versioned and safe to rerun. It upgrades older Supabase schemas by adding the admin reference to `sessions`, normalizing a legacy boolean `cards.active` column, and adding NFC registration timestamps. Existing sessions without an admin link are cleared, so sign in again after that upgrade. Admin accounts all have the same dashboard access; this app does not apply per-role feature restrictions.
-
-## Google business search and review-link generation
-
-The activation form has one smart field: paste a direct Google review/Maps URL to validate it, or type a business name and choose the matching Google Maps result. Choosing a result fills the field with Google's direct `writeAReviewUri`, which is then saved for the card and used for QR/NFC.
-
-Business-name search is optional. To enable it, create a Google Maps Platform project, enable **Places API (New)**, enable billing, create an API key, and set `GOOGLE_MAPS_API_KEY` in the server `.env`. Restrict that key to Places API (New) and keep it server-side; never add a `NEXT_PUBLIC_` prefix. Google bills Places requests according to the fields and usage, so monitor quota and billing. Without this key, directly pasted Google review links still work; name search returns a setup message. A generic Maps place/share URL is not always itself a review-form URL.
-
-## View data
-
-Open **Table Editor** in the Supabase dashboard. The migration creates `cards`, `visits`, `admins`, `sessions`, `rate_events`, `schema_migrations`, and `data_imports` in `public`. Demo and production cards share the database but are separated by the `demo` field; dashboard data and QR export follow `DEMO_MODE`. Use separate Supabase projects if you need stronger isolation.
-
-The project uses the server-side `pg` driver and `DATABASE_URL`; it does not use `@supabase/supabase-js` or expose database credentials in the browser.
-
-## Existing flows
-
-- `/`: landing page with language switcher and loading animation.
-- `/admin`: database-backed login, card counts, card library, QR downloads, analytics, settings, and demo controls.
-- `/flow-preview` (`/demo`): interactive admin, buyer, customer, analytics, and error walkthrough.
-- `/c/RP-...?src=qr` or `?src=nfc`: activation for inactive cards; active cards record the source and redirect. Demo cards open `/demo-review`.
-- `/api/admin/generate`: unique card IDs and one-time four-character activation codes; QR PNG/ZIP and CSV export. Codes use an unambiguous 32-character alphabet and remain paired with their Card ID.
-- In the admin card list, **Reactivate** rotates the activation code and returns the card to inactive status; save the new code CSV because it is shown once. **Delete** removes the card and its visits, so its QR/NFC URL stops working. Deleting a database record does not erase the physical NFC tag; overwrite it separately if reusing it.
-- Dashboard → **Cards** → **Program an NFC card**: choose a generated card. Android Chrome can write directly to a writable NDEF tag over HTTPS. Other phones get the card's NFC URL to paste into a native NFC writer app. The database marks the card as detected when the tag URL is first opened; browsers cannot read the tag's hardware UID.
-- `/api/activate`: validates and consumes a one-time activation code.
-- New activation codes are four characters. Previously issued 12-character codes continue to work during rollout; use **Issue code** in the admin table to replace one with a four-character code. Codes come from the generated card batch CSV and should be printed with the physical card. Four-character codes have lower entropy, so keep activation rate limiting enabled and never reuse codes.
-- Activation writes the business review link to the database. On a supported Android browser, the post-activation **Write Google Review link to NFC chip** action also rewrites a writable NFC tag. iPhone/Safari users need a native NFC writer app. Customers choose their own genuine rating on Google; the app does not preselect or submit a five-star review.
-- The admin card table shows codes for inactive cards after refresh. They are encrypted in the database and are removed when activated. Configure a stable `ACTIVATION_CODE_ENCRYPTION_KEY` in `.env` (32+ random bytes); if unset, `SESSION_SECRET` is used. Existing inactive cards created before this feature only have hashes; use **Issue code** to replace their old code before printing/activating. Active cards have no retrievable activation code.
-
-Download the generated CSV right away. The table can show inactive-card codes after refresh; at rest they are encrypted alongside the verification hash and are cleared on activation. Put the `?src=qr` URL in the QR code and the matching `?src=nfc` URL on the NFC chip.
-
-## Import existing MySQL or SQLite data
-
-Back up the source and stop writes before importing. Run `npm run db:migrate` first. To transfer the old MySQL databases, keep their existing `MYSQL_*` source settings in `.env` and run each source exactly once:
+- Node.js 22.5 or newer (Node 24 recommended).
+- npm 10 or newer.
 
 ```sh
-npm run db:import-mysql -- demo
-npm run db:import-mysql -- production
+npm install
+cp .env.example .env
+npm run dev
 ```
 
-The MySQL importer maps visits by card code, so the demo and production databases can go into one Supabase project. It preserves card state, review URLs, activation hashes, and visit history; it skips admin records, sessions, and rate-limit history. Run the seed command to create a fresh admin in Supabase. `mysql2` is a development-only dependency for this one-time importer; the app runtime uses PostgreSQL only. Stop writes and import once. The fingerprint prevents an identical import from being repeated, but new source visits after an import would be appended again.
+Open `http://localhost:3000`. With the sample development settings, admin password is `local-demo-password`; change it before sharing the machine or enabling a public network interface. Demo mode writes only to `data/repiw-demo.sqlite`.
 
-For older SQLite sources, use `npm run db:import-sqlite -- /absolute/path/to/repiw.sqlite`. It also maps visits by card code and skips sessions and rate-limit history. Keep source copies and verify totals in Table Editor before cutover. Do not use the SQLite importer against a MySQL database.
+## Main routes and flows
 
-## Production notes
+| Page or endpoint | Purpose |
+| --- | --- |
+| `/` | Product landing page |
+| `/admin` | Admin login, dashboard, card management, analytics, exports, and demo settings |
+| `/flow-preview` (`/demo`) | Interactive admin, buyer activation, customer scan, analytics, and error walkthrough |
+| `/c/RP-...?...` | Public QR/NFC card resolution; `src=qr` or `src=nfc` |
+| `/demo-review` | Local demo destination for active demo cards |
+| `/api/admin/generate` | Generate up to 100 unique Card IDs and one-time activation codes |
+| `/api/admin/qr/:code`, `/api/admin/qr-zip` | Download a QR PNG or a ZIP of QR PNGs |
+| `/api/activate` | Validate and consume a one-time activation code |
 
-Set production secrets through the host's secret manager: `NODE_ENV=production`, `DEMO_MODE=false`, an HTTPS `BASE_URL`, `DATABASE_URL`, a random `SESSION_SECRET`, and `TRUST_PROXY=true` only behind a trusted proxy. Keep `PG_POOL_SIZE` within the connection budget across all app instances.
+New card codes, activation codes, and QR/NFC URLs appear after card generation. Download the CSV immediately: activation codes are intentionally never retrievable from the database. QR images encode the `?src=qr` URL; write the matching `?src=nfc` URL to the NFC chip. During activation, paste the business's Google review link copied from Google Business Profile; REPIW does not generate or rewrite Google links. Each active scan records its source and redirects to that exact validated URL. Demo cards redirect to the local simulation.
 
-`npm start` checks configuration but does not test the Supabase connection or prove production readiness. Verify connection mode, TLS, backups/restore, database permissions, proxy headers, and monitoring in the deployed environment. The server database role, not browser RLS, authorizes these SQL queries.
+## Production configuration
 
-## Verification
+Set secrets through the hosting platform's secret manager, not a committed `.env` file.
+
+- `NODE_ENV=production`
+- `DEMO_MODE=false` (the app refuses to start in production with demo mode enabled)
+- `BASE_URL=https://your-final-domain.example` (must be HTTPS; do not change after printing cards)
+- `SESSION_SECRET`: at least 32 random bytes. Generate one with `node -e "console.log(require('node:crypto').randomBytes(48).toString('hex'))"`.
+- `ADMIN_PASSWORD_HASH`: use `npm run password:hash` in a private terminal and set the resulting `scrypt$...` value. Passwords must be at least 14 characters. Plain `ADMIN_PASSWORD` works only outside production.
+- `DB_PATH`: path on a durable, backed-up disk. Use a different file for demo and production.
+- `TRUST_PROXY=true` behind a trusted reverse proxy which overwrites client IP headers. `npm start` enforces this in production so rate limiting has a trustworthy client address.
+
+Run `npm run build`, then `npm start` on a Node.js host with a persistent writable volume. `npm start` validates production secrets, HTTPS, disabled demo mode, and trusted proxy configuration before launching Next.js. SQLite WAL requires durable local storage and one app instance. It is suitable for a single-instance VM/container with attached persistent disk and tested backups. Do not deploy this SQLite configuration on ephemeral serverless storage or scale it across instances. For serverless, multiple instances, or higher concurrent writes, use managed PostgreSQL and migrate the repository/data adapter to a PostgreSQL driver before deployment; that adapter is not included in this SQLite migration.
+
+Terminate HTTPS at a trusted reverse proxy or platform edge, enable its security headers, restrict access to admin endpoints as appropriate, and monitor backups and rate-limit behavior. The application stores session IDs only as HMAC hashes, revokes sessions at logout, sets HTTP-only/SameSite cookies, checks Origin on state-changing requests, hashes new activation codes with scrypt, and rate-limits login, demo login, and activation attempts in SQLite. Rate limits are shared by instances only when they share the same SQLite database; production deployment therefore follows the single-instance constraint above.
+
+## Data migration from Express V1
+
+The source V1 schema uses `cards` and `visits`. This app retains those records and adds `sessions`, `rate_events`, indexes, and SQLite `user_version=2`. It does not export activation-code secrets from their stored hashes. Legacy SHA-256 codes are accepted for activation and then consumed. No review URL or visit data is intentionally rewritten.
+
+1. Stop the old app and make a separate copy of both production and demo DB files. Preserve the originals untouched.
+2. Copy the intended database into this app's durable data directory. Keep production and demo databases separate. Inspect with `sqlite3` or a read-only database viewer and record card/visit counts.
+3. Run `npm run migrate:sqlite -- /absolute/path/to/repiw.sqlite`. The command creates a timestamped `VACUUM INTO` backup, adds the new tables/indexes and schema version, and checks integrity and row counts. Run it against the demo DB separately if retaining demo fixtures.
+4. Point `DB_PATH` at the migrated file and start the Next.js app with `DEMO_MODE=false` for production records. Test login, dashboard counts, representative active/inactive scans, and QR/NFC sources on a staging host.
+5. Compare card and visit counts plus dashboard aggregates with the old app. Keep the original DB and generated backup until cutover is accepted and a restore has been rehearsed.
+6. Roll back by stopping the new app and restoring the original DB copy and old app. Never copy a live SQLite file without a consistent backup/checkpoint process.
+
+Test data before migration: run `npm run migrate:sqlite -- /path/to/a-copy.sqlite`, not on the only production copy. The utility does not merge databases or move rows between demo and production.
+
+## Tests and verification
 
 ```sh
 npm test
-npx tsc --noEmit
 npm run build
+npm run test:e2e
 ```
 
-End-to-end tests need `REPIW_TEST_DATABASE_URL` set to an isolated test database. No Supabase credentials were available in this workspace, so database connection, migration, seed, import, and deployment have not yet been verified.
+Unit tests cover review URL policy and activation-code hash verification. Playwright checks the real sign-in, generation/CSV, activation, QR/NFC redirect tracking, dashboard aggregates, demo path, and responsive layout when a supported browser is installed. Tests use their own temporary database. A passing local build and test suite are necessary checks, not a guarantee of production readiness: hosting persistence, TLS/proxy headers, backup/restore, secrets, and operational monitoring must also be checked for the actual deployment.
+
+Migration-run results: `npm test` passed 4/4; `npx tsc --noEmit` passed; `npm run build` passed; `npm run test:e2e` passed 1/1 in Chrome; `npm audit` reported 0 vulnerabilities. The SQLite migration script passed integrity and row-count checks on copies of both source databases (production copy: 0 cards/0 visits; demo copy: 16 cards/479 visits). These checks do not validate a hosting provider or a production cutover.
+
+## Environment variables
+
+See `.env.example`. Never commit `.env`, SQLite database files, backups, exported card CSVs, or activation codes.
