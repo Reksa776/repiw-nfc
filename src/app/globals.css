@@ -107,3 +107,10 @@ body:before{inset:0;opacity:.34;animation:none;background-size:100% 100%}
 .dashboard .generated .warning{color:#f4d18e}
 .dashboard .download-link,.dashboard .generated a{color:#81ead4;text-decoration:underline;text-decoration-color:rgba(129,234,212,.3);text-underline-offset:3px}
 .dashboard .demo-tag{vertical-align:middle}
+.nfc-write-button{width:100%;min-height:50px;border:0;border-radius:10px;background:var(--green);color:#fff;padding:13px 16px;font:700 14px 'DM Sans',sans-serif;cursor:pointer}
+.nfc-write-button:hover{background:#155f46}
+.nfc-write-button:disabled{opacity:.6;cursor:wait}
+.nfc-fallback-label{display:grid;gap:8px;margin-top:18px;color:#44514c;font-size:12px;font-weight:700}
+.nfc-fallback-label input{height:44px;width:100%;border:1px solid #dce4e0;border-radius:9px;padding:0 12px;background:#f7f9f7;color:var(--ink);font-size:12px}
+.nfc-copy-button{margin-top:10px}
+.activation-card .nfc-message{margin-top:14px}
