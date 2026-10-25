@@ -8,7 +8,7 @@ export function ActivationForm({ code, source }: { code: string; source: string 
   const [error, setError] = useState('');
   const [writeMessage, setWriteMessage] = useState('');
   const [done, setDone] = useState(false);
-  const [fallbackUrl, setFallbackUrl] = useState('');
+  const [destinationUrl, setDestinationUrl] = useState('');
 
   async function submit(e: FormEvent<HTMLFormElement>) {
     e.preventDefault();
@@ -26,7 +26,9 @@ export function ActivationForm({ code, source }: { code: string; source: string 
       if (typeof body.reviewURL !== 'string' || !['http:', 'https:'].includes(new URL(body.reviewURL).protocol)) {
         throw new Error('Link tujuan tidak valid.');
       }
-      setFallbackUrl(new URL(`/c/${encodeURIComponent(code)}?src=nfc`, window.location.origin).toString());
+      // Store the destination itself on the tag so a tap opens it directly without
+      // first passing through the REPIW redirect page.
+      setDestinationUrl(body.reviewURL);
       setDone(true);
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Terjadi kesalahan');
@@ -46,8 +48,8 @@ export function ActivationForm({ code, source }: { code: string; source: string 
     setWriting(true);
     try {
       const reader = new NDEFReader();
-      await reader.write({ records: [{ recordType: 'url', data: fallbackUrl }] }, { overwrite: true });
-      setWriteMessage('Berhasil ditulis ke kartu NFC. Tempelkan lagi kartu ke ponsel untuk menguji.');
+      await reader.write({ records: [{ recordType: 'url', data: destinationUrl }] }, { overwrite: true });
+      setWriteMessage('Link tujuan berhasil ditulis ke kartu NFC. Saat kartu ditap, link itu akan terbuka langsung tanpa melewati halaman REPIW.');
     } catch (err) {
       const name = err instanceof DOMException ? err.name : '';
       if (name === 'NotAllowedError') {
@@ -66,8 +68,8 @@ export function ActivationForm({ code, source }: { code: string; source: string 
 
   async function copyUrl() {
     try {
-      await navigator.clipboard.writeText(fallbackUrl);
-      setWriteMessage('URL NFC disalin. Buka aplikasi penulis NFC, pilih Write, lalu simpan URL sebagai record URL.');
+      await navigator.clipboard.writeText(destinationUrl);
+      setWriteMessage('Link tujuan disalin. Buka aplikasi penulis NFC, pilih Write, lalu simpan link sebagai record URL.');
       setError('');
     } catch {
       setError('URL tidak dapat disalin otomatis. Pilih URL di kotak, salin, lalu tulis dengan aplikasi NFC.');
@@ -79,14 +81,14 @@ export function ActivationForm({ code, source }: { code: string; source: string 
     <p className="eyebrow">KARTU REPIW · {source.toUpperCase()}</p>
     {done ? <>
       <h1>Kartu berhasil diaktifkan</h1>
-      <p className="muted">Sekarang tulis URL REPIW ke chip NFC. Setelah itu, tap kartu akan tercatat dan membuka link tujuan yang tadi Anda masukkan.</p>
+      <p className="muted">Tulis link tujuan langsung ke chip NFC. Setelah itu, tap kartu akan membuka link tersebut tanpa melewati halaman REPIW.</p>
       <button type="button" className="nfc-write-button" onClick={writeNfc} disabled={writing}>
         {writing ? 'Menunggu kartu… tempelkan ke ponsel' : 'Tulis link ke kartu NFC'}
       </button>
       {writeMessage && <p className="success nfc-message" role="status">{writeMessage}</p>}
-      <label className="nfc-fallback-label">URL NFC kartu<input readOnly value={fallbackUrl} onFocus={e => e.currentTarget.select()} /></label>
-      <button type="button" className="button button-outline nfc-copy-button" onClick={copyUrl}>Salin URL untuk aplikasi NFC</button>
-      <p className="fine-print">Penulisan langsung memerlukan Chrome Android, HTTPS, NFC aktif, dan tag NDEF yang bisa ditulis. iPhone dan browser yang tidak mendukung Web NFC dapat menggunakan aplikasi penulis NFC native.</p>
+      <label className="nfc-fallback-label">Link yang akan ditulis ke NFC<input readOnly value={destinationUrl} onFocus={e => e.currentTarget.select()} /></label>
+      <button type="button" className="button button-outline nfc-copy-button" onClick={copyUrl}>Salin link untuk aplikasi NFC</button>
+      <p className="fine-print">Penulisan langsung memerlukan Chrome Android, HTTPS, NFC aktif, dan tag NDEF yang bisa ditulis. Untuk iPhone atau browser yang tidak mendukung Web NFC, tulis link di atas sebagai record URL memakai aplikasi NFC native. Karena link ditulis langsung, tap NFC tidak melewati REPIW dan tidak tercatat di statistik NFC.</p>
     </> : <>
       <h1>Aktifkan kartu Anda</h1>
       <p className="muted">Masukkan kode pada kartu, lalu tempel link tujuan untuk NFC.</p>
