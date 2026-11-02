@@ -77,8 +77,8 @@ async function resolveFolderId(token: string) {
   const found = await fetch(`https://www.googleapis.com/drive/v3/files?${query}`, {
     headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(12_000),
   });
-  const foundBody = await found.json() as { files?: Array<{ id: string }> };
-  if (!found.ok) throw new Error(`Google Drive folder lookup failed: ${found.status}`);
+  const foundBody = await found.json() as { files?: Array<{ id: string }>; error?: { message?: string; errors?: Array<{ reason?: string }> } };
+  if (!found.ok) throw new Error(`Google Drive folder lookup failed (${found.status}): ${foundBody.error?.errors?.[0]?.reason || foundBody.error?.message || 'Unknown API error'}`);
   if (foundBody.files?.[0]) return cachedFolderId = foundBody.files[0].id;
   const created = await fetch('https://www.googleapis.com/drive/v3/files?fields=id,name', {
     method: 'POST',
@@ -86,41 +86,27 @@ async function resolveFolderId(token: string) {
     body: JSON.stringify({ name: 'REPIW QR', mimeType: 'application/vnd.google-apps.folder' }),
     signal: AbortSignal.timeout(12_000),
   });
-  const createdBody = await created.json() as { id?: string; error?: { message?: string } };
-  if (!created.ok || !createdBody.id) throw new Error(`Google Drive folder creation failed: ${createdBody.error?.message || created.status}`);
+  const createdBody = await created.json() as { id?: string; error?: { message?: string; errors?: Array<{ reason?: string }> } };
+  if (!created.ok || !createdBody.id) throw new Error(`Google Drive folder creation failed (${created.status}): ${createdBody.error?.errors?.[0]?.reason || createdBody.error?.message || 'Unknown API error'}`);
   return cachedFolderId = createdBody.id;
 }
 
 export async function uploadCardQr(code: string, png: Buffer) {
   const token = await accessToken();
   const folderId = await resolveFolderId(token);
-  const query = new URLSearchParams({
-    q: `name='${code}.png' and '${folderId.replaceAll("'", "\\'")}' in parents and trashed=false`,
-    fields: 'files(id,name,webViewLink)',
-    pageSize: '1',
-    supportsAllDrives: 'true',
-    includeItemsFromAllDrives: 'true',
-  });
-  const search = await fetch(`https://www.googleapis.com/drive/v3/files?${query}`, {
-    headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(12_000),
-  });
-  const searchBody = await search.json() as { files?: Array<{ id: string; webViewLink?: string }> };
-  if (!search.ok) throw new Error(`Google Drive lookup failed: ${search.status}`);
-  const existing = searchBody.files?.[0];
-  const metadata = existing ? undefined : { name: `${code}.png`, mimeType: 'image/png', parents: [folderId] };
+  const metadata = { name: `${code}.png`, mimeType: 'image/png', parents: [folderId] };
   const boundary = `repiw_${crypto.randomBytes(12).toString('hex')}`;
   const body = Buffer.concat([
     Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata || {})}\r\n--${boundary}\r\nContent-Type: image/png\r\n\r\n`),
     png,
     Buffer.from(`\r\n--${boundary}--`),
   ]);
-  const path = existing ? `https://www.googleapis.com/upload/drive/v3/files/${encodeURIComponent(existing.id)}` : 'https://www.googleapis.com/upload/drive/v3/files';
-  const upload = await fetch(`${path}?uploadType=multipart&fields=id,name,webViewLink&supportsAllDrives=true`, {
-    method: existing ? 'PATCH' : 'POST',
+  const upload = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink&supportsAllDrives=true', {
+    method: 'POST',
     headers: { Authorization: `Bearer ${token}`, 'Content-Type': `multipart/related; boundary=${boundary}`, 'Content-Length': String(body.byteLength) },
     body, signal: AbortSignal.timeout(30_000),
   });
-  const result = await upload.json() as { id?: string; webViewLink?: string; error?: { message?: string } };
-  if (!upload.ok || !result.id) throw new Error(`Google Drive upload failed: ${result.error?.message || upload.status}`);
+  const result = await upload.json() as { id?: string; webViewLink?: string; error?: { message?: string; errors?: Array<{ reason?: string }> } };
+  if (!upload.ok || !result.id) throw new Error(`Google Drive upload failed (${upload.status}): ${result.error?.errors?.[0]?.reason || result.error?.message || 'Unknown API error'}`);
   return { fileId: result.id, webViewLink: result.webViewLink || `https://drive.google.com/file/d/${result.id}/view` };
 }

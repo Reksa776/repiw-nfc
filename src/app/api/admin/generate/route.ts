@@ -35,7 +35,7 @@ export async function POST(req:NextRequest) {
         item.driveUrl = uploaded.webViewLink;
       } catch (error) {
         console.error(`Could not upload QR for ${item.code} to Google Drive`,error);
-        item.driveError = 'Upload gagal';
+        item.driveError = error instanceof Error ? error.message.slice(0,180) : 'Upload gagal';
       }
     }
   } else {
