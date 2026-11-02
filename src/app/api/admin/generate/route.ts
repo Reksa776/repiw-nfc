@@ -3,6 +3,8 @@ import { db,makeActivationCode,makeCode,transaction,demo } from '@/lib/db';
 import { encryptActivationCode,hashActivationCode } from '@/lib/security';
 import { generateSchema,safeBaseURL } from '@/lib/validation';
 import { requireAdmin,jsonError,sameOrigin } from '@/lib/http';
+import QRCode from 'qrcode';
+import { googleDriveConfigured,uploadCardQr } from '@/lib/google-drive';
 export const runtime='nodejs';
 export async function POST(req:NextRequest) {
   if(!sameOrigin(req)) return jsonError('Permintaan lintas situs ditolak.',403);
@@ -10,7 +12,7 @@ export async function POST(req:NextRequest) {
   let body:unknown; try{body=await req.json()}catch{return jsonError('Format permintaan tidak valid.',400)}
   const parsed=generateSchema.safeParse(body); if(!parsed.success)return jsonError('Jumlah harus antara 1 dan 100.',400);
   let base:string; try{base=safeBaseURL()}catch{return jsonError('BASE_URL belum dikonfigurasi dengan benar.',500)}
-  const items:Array<{code:string;activationCode:string;qrURL:string;nfcURL:string}> = [];
+  const items:Array<{code:string;activationCode:string;qrURL:string;nfcURL:string;driveUrl?:string;driveError?:string}> = [];
   try {
     await transaction(async (tx)=>{
       for(let i=0;i<parsed.data.count;i++) {
@@ -25,5 +27,23 @@ export async function POST(req:NextRequest) {
       }
     });
   } catch(e) { console.error('card generation failed',e); return jsonError('Kartu tidak dapat dibuat saat ini.',500); }
-  return NextResponse.json({items,notice:'Unduh CSV sekarang. Kode aktivasi hanya ditampilkan sekali.'},{headers:{'Cache-Control':'no-store'}});
+  if (googleDriveConfigured()) {
+    for (const item of items) {
+      try {
+        const png = await QRCode.toBuffer(item.qrURL,{width:1000,margin:3,errorCorrectionLevel:'H'});
+        const uploaded = await uploadCardQr(item.code,png);
+        item.driveUrl = uploaded.webViewLink;
+      } catch (error) {
+        console.error(`Could not upload QR for ${item.code} to Google Drive`,error);
+        item.driveError = 'Upload gagal';
+      }
+    }
+  } else {
+    for (const item of items) item.driveError = 'Drive belum dikonfigurasi';
+  }
+  const uploadedCount = items.filter(item=>item.driveUrl).length;
+  const notice = googleDriveConfigured()
+    ? `Unduh CSV sekarang. Kode aktivasi hanya ditampilkan sekali. PNG QR di Drive: ${uploadedCount}/${items.length}.`
+    : 'Kartu berhasil dibuat, tetapi Google Drive belum dikonfigurasi. Kode aktivasi hanya ditampilkan sekali.';
+  return NextResponse.json({items,notice},{headers:{'Cache-Control':'no-store'}});
 }
