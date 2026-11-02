@@ -3,8 +3,8 @@ import { db,makeActivationCode,makeCode,transaction,demo } from '@/lib/db';
 import { encryptActivationCode,hashActivationCode } from '@/lib/security';
 import { generateSchema,safeBaseURL } from '@/lib/validation';
 import { requireAdmin,jsonError,sameOrigin } from '@/lib/http';
-import QRCode from 'qrcode';
-import { googleDriveConfigured,uploadCardQr } from '@/lib/google-drive';
+import { createCardActivationPdf } from '@/lib/card-pdf';
+import { googleDriveConfigured,uploadCardPdf } from '@/lib/google-drive';
 export const runtime='nodejs';
 export async function POST(req:NextRequest) {
   if(!sameOrigin(req)) return jsonError('Permintaan lintas situs ditolak.',403);
@@ -30,8 +30,8 @@ export async function POST(req:NextRequest) {
   if (googleDriveConfigured()) {
     for (const item of items) {
       try {
-        const png = await QRCode.toBuffer(item.qrURL,{width:1000,margin:3,errorCorrectionLevel:'H'});
-        const uploaded = await uploadCardQr(item.code,png);
+        const pdf = createCardActivationPdf(item.code,item.activationCode,item.qrURL);
+        const uploaded = await uploadCardPdf(item.code,pdf);
         item.driveUrl = uploaded.webViewLink;
       } catch (error) {
         console.error(`Could not upload QR for ${item.code} to Google Drive`,error);
@@ -43,7 +43,7 @@ export async function POST(req:NextRequest) {
   }
   const uploadedCount = items.filter(item=>item.driveUrl).length;
   const notice = googleDriveConfigured()
-    ? `Unduh CSV sekarang. Kode aktivasi hanya ditampilkan sekali. PNG QR di Drive: ${uploadedCount}/${items.length}.`
+    ? `Unduh CSV sekarang. Kode aktivasi hanya ditampilkan sekali. PDF kartu di Drive: ${uploadedCount}/${items.length}.`
     : 'Kartu berhasil dibuat, tetapi Google Drive belum dikonfigurasi. Kode aktivasi hanya ditampilkan sekali.';
   return NextResponse.json({items,notice},{headers:{'Cache-Control':'no-store'}});
 }
