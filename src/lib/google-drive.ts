@@ -1,5 +1,6 @@
 import 'server-only';
 import crypto from 'node:crypto';
+import { db } from '@/lib/db';
 
 type ServiceAccount = { client_email: string; private_key: string; token_uri?: string };
 let cachedToken: { value: string; expiresAt: number } | undefined;
@@ -91,10 +92,58 @@ async function resolveFolderId(token: string) {
   return cachedFolderId = createdBody.id;
 }
 
-async function uploadCardFile(code: string, content: Buffer, mimeType: string, extension: 'png' | 'pdf') {
+async function nextDrivePdfNumber(token: string, folderId: string) {
+  let pageToken: string | undefined;
+  let highest = 0;
+  do {
+    const query = new URLSearchParams({
+      q: `'${folderId}' in parents and trashed=false`,
+      fields: 'nextPageToken,files(name)',
+      pageSize: '1000',
+      includeItemsFromAllDrives: 'true',
+      supportsAllDrives: 'true',
+    });
+    if (pageToken) query.set('pageToken', pageToken);
+    const response = await fetch(`https://www.googleapis.com/drive/v3/files?${query}`, {
+      headers: { Authorization: `Bearer ${token}` },
+      signal: AbortSignal.timeout(12_000),
+    });
+    const body = await response.json() as { files?: Array<{ name?: string }>; nextPageToken?: string; error?: { message?: string; errors?: Array<{ reason?: string }> } };
+    if (!response.ok) throw new Error(`Google Drive file lookup failed (${response.status}): ${body.error?.errors?.[0]?.reason || body.error?.message || 'Unknown API error'}`);
+    for (const file of body.files || []) {
+      const match = /^(\d+)\.pdf$/i.exec(file.name || '');
+      if (match) highest = Math.max(highest, Number(match[1]));
+    }
+    pageToken = body.nextPageToken;
+  } while (pageToken);
+  if (!Number.isSafeInteger(highest + 1)) throw new Error('Google Drive PDF numbering exceeded the supported range.');
+  return highest + 1;
+}
+
+/** Reserve a contiguous set of PDF names. The Drive scan recovers the number
+ * after manual edits, while the database counter prevents concurrent batches
+ * on different server instances from reserving the same numbers. */
+export async function reserveCardPdfNumbers(count: number) {
+  if (!Number.isInteger(count) || count < 1 || count > 100) throw new Error('PDF number reservation count is invalid.');
   const token = await accessToken();
   const folderId = await resolveFolderId(token);
-  const metadata = { name: `${code}.${extension}`, mimeType, parents: [folderId] };
+  const firstAvailable = await nextDrivePdfNumber(token, folderId);
+  const rows = await db.query<{ first_number: string | number }>(
+    `INSERT INTO drive_file_counters(counter_name,next_value) VALUES('card_pdfs',?::bigint + ?::bigint)
+     ON CONFLICT(counter_name) DO UPDATE
+     SET next_value=GREATEST(drive_file_counters.next_value,EXCLUDED.next_value-?::bigint)+?::bigint
+     RETURNING (next_value-?::bigint) AS first_number`,
+    [firstAvailable, count, count, count, count],
+  );
+  const first = Number(rows[0]?.first_number);
+  if (!Number.isSafeInteger(first) || first < 1 || !Number.isSafeInteger(first + count - 1)) throw new Error('Could not reserve valid Google Drive PDF numbers.');
+  return Array.from({ length: count }, (_, index) => first + index);
+}
+
+async function uploadCardFile(name: string, content: Buffer, mimeType: string, extension: 'png' | 'pdf') {
+  const token = await accessToken();
+  const folderId = await resolveFolderId(token);
+  const metadata = { name: `${name}.${extension}`, mimeType, parents: [folderId] };
   const boundary = `repiw_${crypto.randomBytes(12).toString('hex')}`;
   const body = Buffer.concat([
     Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`),
@@ -111,4 +160,7 @@ async function uploadCardFile(code: string, content: Buffer, mimeType: string, e
   return { fileId: result.id, webViewLink: result.webViewLink || `https://drive.google.com/file/d/${result.id}/view` };
 }
 
-export const uploadCardPdf = (code: string, pdf: Buffer) => uploadCardFile(code, pdf, 'application/pdf', 'pdf');
+export const uploadCardPdf = (number: number, pdf: Buffer) => {
+  if (!Number.isSafeInteger(number) || number < 1) throw new Error('Google Drive PDF number is invalid.');
+  return uploadCardFile(String(number), pdf, 'application/pdf', 'pdf');
+};

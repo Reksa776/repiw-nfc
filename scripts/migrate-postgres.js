@@ -65,6 +65,9 @@ const migrations=[
  {name:'resolver_worker_heartbeat',sql:[
   `CREATE TABLE IF NOT EXISTS resolver_workers(worker_id VARCHAR(64) PRIMARY KEY,hostname VARCHAR(255),concurrency INTEGER NOT NULL DEFAULT 1,started_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,last_seen_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
   `CREATE INDEX IF NOT EXISTS idx_resolver_workers_seen ON resolver_workers(last_seen_at DESC)`
+ ]},
+ {name:'google_drive_pdf_numbering',sql:[
+  `CREATE TABLE IF NOT EXISTS drive_file_counters(counter_name VARCHAR(80) PRIMARY KEY,next_value BIGINT NOT NULL CHECK(next_value>=1))`
  ]}
 ];
 
