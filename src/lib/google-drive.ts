@@ -91,14 +91,14 @@ async function resolveFolderId(token: string) {
   return cachedFolderId = createdBody.id;
 }
 
-export async function uploadCardQr(code: string, png: Buffer) {
+async function uploadCardFile(code: string, content: Buffer, mimeType: string, extension: 'png' | 'pdf') {
   const token = await accessToken();
   const folderId = await resolveFolderId(token);
-  const metadata = { name: `${code}.png`, mimeType: 'image/png', parents: [folderId] };
+  const metadata = { name: `${code}.${extension}`, mimeType, parents: [folderId] };
   const boundary = `repiw_${crypto.randomBytes(12).toString('hex')}`;
   const body = Buffer.concat([
-    Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata || {})}\r\n--${boundary}\r\nContent-Type: image/png\r\n\r\n`),
-    png,
+    Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`),
+    content,
     Buffer.from(`\r\n--${boundary}--`),
   ]);
   const upload = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id,name,webViewLink&supportsAllDrives=true', {
@@ -110,3 +110,5 @@ export async function uploadCardQr(code: string, png: Buffer) {
   if (!upload.ok || !result.id) throw new Error(`Google Drive upload failed (${upload.status}): ${result.error?.errors?.[0]?.reason || result.error?.message || 'Unknown API error'}`);
   return { fileId: result.id, webViewLink: result.webViewLink || `https://drive.google.com/file/d/${result.id}/view` };
 }
+
+export const uploadCardPdf = (code: string, pdf: Buffer) => uploadCardFile(code, pdf, 'application/pdf', 'pdf');
