@@ -38,6 +38,8 @@ New card codes, activation codes, and QR/NFC URLs appear after card generation. 
 
 ### Google Drive QR uploads
 
+Each generated Card ID is unique; the QR upload uses a direct create request and does not search Drive for matching filenames first.
+
 When a card batch is generated, the server also creates one PNG QR image per card and uploads it to Google Drive as `<CARD-ID>.png`. In Google Cloud, enable the Google Drive API and create OAuth client credentials. For a personal My Drive account, configure `GOOGLE_DRIVE_CLIENT_ID`, `GOOGLE_DRIVE_CLIENT_SECRET`, and `GOOGLE_DRIVE_REFRESH_TOKEN` for a user authorized with the `drive.file` scope. Leave `GOOGLE_DRIVE_FOLDER_ID` blank; the app creates and uses its own `REPIW QR` folder, which works with the narrower `drive.file` permission. Alternatively, for a Google Workspace Shared Drive, configure `GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON`, set `GOOGLE_DRIVE_FOLDER_ID` to a folder inside that Shared Drive, and add the service-account email with permission to add files. Service accounts cannot own files in personal My Drive because they have no storage quota. Put credentials in local `.env` for development and Vercel Project Settings → Environment Variables for deployment; never commit secrets. Existing QR file names in the folder are updated when the same card is generated again. The generator response shows a Drive link for successful uploads and an error status per card when an upload fails. Upload is unavailable until authentication settings are configured.
 
 ## Production configuration
