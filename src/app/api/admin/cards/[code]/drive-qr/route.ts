@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from 'next/server';
 import { db, demo } from '@/lib/db';
 import { requireAdmin, jsonError, sameOrigin } from '@/lib/http';
 import { safeBaseURL } from '@/lib/validation';
-import { uploadCardPdf } from '@/lib/google-drive';
+import { reserveCardPdfNumbers, uploadCardPdf } from '@/lib/google-drive';
 import { createCardActivationPdf } from '@/lib/card-pdf';
 import { decryptActivationCode } from '@/lib/security';
 
@@ -20,8 +20,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
     const url = `${safeBaseURL()}/c/${card.code}?src=qr`;
     const activationCode = decryptActivationCode(card.activation_code_encrypted);
     const pdf = createCardActivationPdf(card.code, activationCode, url);
-    const uploaded = await uploadCardPdf(card.code, pdf);
-    return NextResponse.json({ ok: true, code: card.code, driveUrl: uploaded.webViewLink }, { headers: { 'Cache-Control': 'no-store' } });
+    const [fileNumber] = await reserveCardPdfNumbers(1);
+    const uploaded = await uploadCardPdf(fileNumber, pdf);
+    return NextResponse.json({ ok: true, code: card.code, driveUrl: uploaded.webViewLink, driveFileName: `${fileNumber}.pdf` }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error(`Could not upload activation PDF for ${code} to Google Drive`, error);
     return jsonError(error instanceof Error ? error.message.slice(0, 180) : 'Upload PDF ke Google Drive gagal.', 502);

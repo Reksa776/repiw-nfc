@@ -4,7 +4,7 @@ import { encryptActivationCode,hashActivationCode } from '@/lib/security';
 import { generateSchema,safeBaseURL } from '@/lib/validation';
 import { requireAdmin,jsonError,sameOrigin } from '@/lib/http';
 import { createCardActivationPdf } from '@/lib/card-pdf';
-import { googleDriveConfigured,uploadCardPdf } from '@/lib/google-drive';
+import { googleDriveConfigured,reserveCardPdfNumbers,uploadCardPdf } from '@/lib/google-drive';
 export const runtime='nodejs';
 export async function POST(req:NextRequest) {
   if(!sameOrigin(req)) return jsonError('Permintaan lintas situs ditolak.',403);
@@ -12,7 +12,7 @@ export async function POST(req:NextRequest) {
   let body:unknown; try{body=await req.json()}catch{return jsonError('Format permintaan tidak valid.',400)}
   const parsed=generateSchema.safeParse(body); if(!parsed.success)return jsonError('Jumlah harus antara 1 dan 100.',400);
   let base:string; try{base=safeBaseURL()}catch{return jsonError('BASE_URL belum dikonfigurasi dengan benar.',500)}
-  const items:Array<{code:string;activationCode:string;qrURL:string;nfcURL:string;driveUrl?:string;driveError?:string}> = [];
+  const items:Array<{code:string;activationCode:string;qrURL:string;nfcURL:string;driveUrl?:string;driveFileName?:string;driveError?:string}> = [];
   try {
     await transaction(async (tx)=>{
       for(let i=0;i<parsed.data.count;i++) {
@@ -28,11 +28,21 @@ export async function POST(req:NextRequest) {
     });
   } catch(e) { console.error('card generation failed',e); return jsonError('Kartu tidak dapat dibuat saat ini.',500); }
   if (googleDriveConfigured()) {
-    for (const item of items) {
+    let numbers: number[] = [];
+    try {
+      numbers = await reserveCardPdfNumbers(items.length);
+    } catch (error) {
+      console.error('Could not reserve Google Drive PDF names',error);
+      for (const item of items) item.driveError = error instanceof Error ? error.message.slice(0,180) : 'Upload gagal';
+    }
+    for (const [index,item] of items.entries()) {
+      if (!numbers.length) break;
       try {
         const pdf = createCardActivationPdf(item.code,item.activationCode,item.qrURL);
-        const uploaded = await uploadCardPdf(item.code,pdf);
+        const fileNumber = numbers[index];
+        const uploaded = await uploadCardPdf(fileNumber,pdf);
         item.driveUrl = uploaded.webViewLink;
+        item.driveFileName = `${fileNumber}.pdf`;
       } catch (error) {
         console.error(`Could not upload QR for ${item.code} to Google Drive`,error);
         item.driveError = error instanceof Error ? error.message.slice(0,180) : 'Upload gagal';
