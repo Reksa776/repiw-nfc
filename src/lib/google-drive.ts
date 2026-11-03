@@ -111,7 +111,7 @@ async function nextDrivePdfNumber(token: string, folderId: string) {
     const body = await response.json() as { files?: Array<{ name?: string }>; nextPageToken?: string; error?: { message?: string; errors?: Array<{ reason?: string }> } };
     if (!response.ok) throw new Error(`Google Drive file lookup failed (${response.status}): ${body.error?.errors?.[0]?.reason || body.error?.message || 'Unknown API error'}`);
     for (const file of body.files || []) {
-      const match = /^(\d+)\.pdf$/i.exec(file.name || '');
+      const match = /^(\d+)(?:\.pdf)?$/i.exec(file.name || '');
       if (match) highest = Math.max(highest, Number(match[1]));
     }
     pageToken = body.nextPageToken;
@@ -140,10 +140,10 @@ export async function reserveCardPdfNumbers(count: number) {
   return Array.from({ length: count }, (_, index) => first + index);
 }
 
-async function uploadCardFile(name: string, content: Buffer, mimeType: string, extension: 'png' | 'pdf') {
+async function uploadCardFile(name: string, content: Buffer, mimeType: string, extension: 'png' | 'pdf' | null) {
   const token = await accessToken();
   const folderId = await resolveFolderId(token);
-  const metadata = { name: `${name}.${extension}`, mimeType, parents: [folderId] };
+  const metadata = { name: extension ? `${name}.${extension}` : name, mimeType, parents: [folderId] };
   const boundary = `repiw_${crypto.randomBytes(12).toString('hex')}`;
   const body = Buffer.concat([
     Buffer.from(`--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n--${boundary}\r\nContent-Type: ${mimeType}\r\n\r\n`),
@@ -162,5 +162,5 @@ async function uploadCardFile(name: string, content: Buffer, mimeType: string, e
 
 export const uploadCardPdf = (number: number, pdf: Buffer) => {
   if (!Number.isSafeInteger(number) || number < 1) throw new Error('Google Drive PDF number is invalid.');
-  return uploadCardFile(String(number), pdf, 'application/pdf', 'pdf');
+  return uploadCardFile(String(number), pdf, 'application/pdf', null);
 };
