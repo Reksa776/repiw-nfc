@@ -68,6 +68,9 @@ const migrations=[
  ]},
  {name:'google_drive_pdf_numbering',sql:[
   `CREATE TABLE IF NOT EXISTS drive_file_counters(counter_name VARCHAR(80) PRIMARY KEY,next_value BIGINT NOT NULL CHECK(next_value>=1))`
+ ]},
+ {name:'store_card_drive_pdf_name',sql:[
+  `ALTER TABLE cards ADD COLUMN IF NOT EXISTS drive_pdf_name VARCHAR(64)`
  ]}
 ];
 
