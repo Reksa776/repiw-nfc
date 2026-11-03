@@ -22,7 +22,9 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
     const pdf = createCardActivationPdf(card.code, activationCode, url);
     const [fileNumber] = await reserveCardPdfNumbers(1);
     const uploaded = await uploadCardPdf(fileNumber, pdf);
-    return NextResponse.json({ ok: true, code: card.code, driveUrl: uploaded.webViewLink, driveFileName: `${fileNumber}.pdf` }, { headers: { 'Cache-Control': 'no-store' } });
+    const driveFileName = `${fileNumber}.pdf`;
+    await db.execute('UPDATE cards SET drive_pdf_name=? WHERE code=? AND demo=?',[driveFileName,card.code,demo?1:0]);
+    return NextResponse.json({ ok: true, code: card.code, driveUrl: uploaded.webViewLink, driveFileName }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error(`Could not upload activation PDF for ${code} to Google Drive`, error);
     return jsonError(error instanceof Error ? error.message.slice(0, 180) : 'Upload PDF ke Google Drive gagal.', 502);
