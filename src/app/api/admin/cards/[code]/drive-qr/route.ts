@@ -22,7 +22,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
     const pdf = createCardActivationPdf(card.code, activationCode, url);
     const [fileNumber] = await reserveCardPdfNumbers(1);
     const uploaded = await uploadCardPdf(fileNumber, pdf);
-    const driveFileName = `${fileNumber}.pdf`;
+    const driveFileName = String(fileNumber);
     await db.execute('UPDATE cards SET drive_pdf_name=? WHERE code=? AND demo=?',[driveFileName,card.code,demo?1:0]);
     return NextResponse.json({ ok: true, code: card.code, driveUrl: uploaded.webViewLink, driveFileName }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {

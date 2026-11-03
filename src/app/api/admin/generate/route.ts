@@ -42,7 +42,7 @@ export async function POST(req:NextRequest) {
         const fileNumber = numbers[index];
         const uploaded = await uploadCardPdf(fileNumber,pdf);
         item.driveUrl = uploaded.webViewLink;
-        item.driveFileName = `${fileNumber}.pdf`;
+        item.driveFileName = String(fileNumber);
         await db.execute('UPDATE cards SET drive_pdf_name=? WHERE code=? AND demo=?',[item.driveFileName,item.code,demo?1:0]);
       } catch (error) {
         console.error(`Could not upload QR for ${item.code} to Google Drive`,error);
