@@ -15,7 +15,9 @@ export async function ensureDriveSchema() {
       await db.execute(`CREATE TABLE IF NOT EXISTS drive_file_counters(counter_name VARCHAR(80) PRIMARY KEY,next_value BIGINT NOT NULL CHECK(next_value>=1))`);
       await db.execute(`CREATE TABLE IF NOT EXISTS drive_file_reservations(number BIGINT PRIMARY KEY CHECK(number>=1),status VARCHAR(16) NOT NULL CHECK(status IN ('pending','uploaded')),drive_file_id VARCHAR(128),created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_drive_file_reservations_status ON drive_file_reservations(status,created_at)`);
+      await db.execute(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS drive_pdf_name VARCHAR(64)`);
       await db.execute(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS drive_file_name VARCHAR(64)`);
+      await db.execute(`UPDATE cards SET drive_file_name=drive_pdf_name WHERE drive_file_name IS NULL AND drive_pdf_name IS NOT NULL`);
     })().catch(error => {
       driveSchemaReady = undefined;
       throw error;
