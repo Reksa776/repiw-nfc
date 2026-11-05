@@ -30,7 +30,7 @@ export async function GET() {
     const base = safeBaseURL();
     const images: Buffer[] = [];
     const sheetRows = [
-      `<row r="1">${cell('A1', 'Nama File Drive')}${cell('B1', 'Kode Aktivasi')}${cell('C1', 'Kode ID Kartu')}${cell('D1', 'QR')}</row>`,
+      `<row r="1">${cell('A1', 'File Drive')}${cell('B1', 'Kode Aktivasi')}${cell('C1', 'Kode ID Kartu')}${cell('D1', 'QR')}</row>`,
     ];
     const anchors: string[] = [];
 
