@@ -21,8 +21,8 @@ export async function GET() {
   if (!await requireAdmin()) return jsonError('Silakan login admin.', 401);
 
   try {
-    const rows = await db.query<{ code: string; drive_pdf_name: string | null; activation_code_encrypted: string | null }>(
-      'SELECT code,drive_pdf_name,activation_code_encrypted FROM cards WHERE demo=? AND active=0 ORDER BY id',
+    const rows = await db.query<{ code: string; drive_file_name: string | null; activation_code_encrypted: string | null }>(
+      'SELECT code,drive_file_name,activation_code_encrypted FROM cards WHERE demo=? AND active=0 ORDER BY id',
       [demo ? 1 : 0],
     );
     const base = safeBaseURL();
@@ -38,7 +38,7 @@ export async function GET() {
       const url = `${base}/c/${item.code}?src=qr`;
       const activationCode = item.activation_code_encrypted ? decryptActivationCode(item.activation_code_encrypted) : '';
       images.push(await QRCode.toBuffer(url, { width: 120, margin: 1, errorCorrectionLevel: 'H' }));
-      sheetRows.push(`<row r="${rowNumber}" ht="96" customHeight="1">${cell(`A${rowNumber}`, item.drive_pdf_name || 'Belum tercatat')}${cell(`B${rowNumber}`, activationCode)}${cell(`C${rowNumber}`, item.code)}<c r="D${rowNumber}"/></row>`);
+      sheetRows.push(`<row r="${rowNumber}" ht="96" customHeight="1">${cell(`A${rowNumber}`, item.drive_file_name || 'Belum tercatat')}${cell(`B${rowNumber}`, activationCode)}${cell(`C${rowNumber}`, item.code)}<c r="D${rowNumber}"/></row>`);
       anchors.push(`<xdr:oneCellAnchor><xdr:from><xdr:col>3</xdr:col><xdr:colOff>95250</xdr:colOff><xdr:row>${rowNumber - 1}</xdr:row><xdr:rowOff>47625</xdr:rowOff></xdr:from><xdr:ext cx="1047750" cy="1047750"/><xdr:pic><xdr:nvPicPr><xdr:cNvPr id="${index + 2}" name="QR ${xml(item.code)}"/><xdr:cNvPicPr><a:picLocks noChangeAspect="1"/></xdr:cNvPicPr></xdr:nvPicPr><xdr:blipFill><a:blip r:embed="rId${index + 1}"/><a:stretch><a:fillRect/></a:stretch></xdr:blipFill><xdr:spPr><a:prstGeom prst="rect"><a:avLst/></a:prstGeom></xdr:spPr></xdr:pic><xdr:clientData/></xdr:oneCellAnchor>`);
     }
 

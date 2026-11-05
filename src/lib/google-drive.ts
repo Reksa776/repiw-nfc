@@ -92,7 +92,7 @@ async function resolveFolderId(token: string) {
   return cachedFolderId = createdBody.id;
 }
 
-async function existingDrivePdfNumbers(token: string, folderId: string) {
+async function existingDriveFileNumbers(token: string, folderId: string) {
   let pageToken: string | undefined;
   const numbers = new Set<number>();
   do {
@@ -111,7 +111,7 @@ async function existingDrivePdfNumbers(token: string, folderId: string) {
     const body = await response.json() as { files?: Array<{ name?: string }>; nextPageToken?: string; error?: { message?: string; errors?: Array<{ reason?: string }> } };
     if (!response.ok) throw new Error(`Google Drive file lookup failed (${response.status}): ${body.error?.errors?.[0]?.reason || body.error?.message || 'Unknown API error'}`);
     for (const file of body.files || []) {
-      const match = /^(\d+)(?:\.pdf)?$/i.exec(file.name || '');
+      const match = /^(\d+)(?:\.(?:pdf|png))?$/i.exec(file.name || '');
       if (match) {
         const number = Number(match[1]);
         if (Number.isSafeInteger(number) && number > 0) numbers.add(number);
@@ -122,38 +122,45 @@ async function existingDrivePdfNumbers(token: string, folderId: string) {
   return numbers;
 }
 
-/** Reserve the lowest unused PDF numbers. A database lock serializes reservations
+/** Reserve the lowest unused Drive image numbers. A database lock serializes reservations
  * across server instances, and pending rows protect numbers before upload finishes. */
-export async function reserveCardPdfNumbers(count: number) {
-  if (!Number.isInteger(count) || count < 1 || count > 100) throw new Error('PDF number reservation count is invalid.');
+export async function reserveCardImageNumbers(count: number) {
+  if (!Number.isInteger(count) || count < 1 || count > 100) throw new Error('Drive image number reservation count is invalid.');
   const token = await accessToken();
   const folderId = await resolveFolderId(token);
-  const driveNumbers = await existingDrivePdfNumbers(token, folderId);
+  const driveScanStartedAt = new Date();
+  const driveNumbers = await existingDriveFileNumbers(token, folderId);
   return transaction(async tx => {
     await tx.execute(`INSERT INTO drive_file_counters(counter_name,next_value) VALUES('card_pdfs',1) ON CONFLICT(counter_name) DO NOTHING`);
     await tx.query('SELECT next_value FROM drive_file_counters WHERE counter_name=? FOR UPDATE', ['card_pdfs']);
-    const driveNumberList = [...driveNumbers];
+    // Reconcile older completed uploads against this Drive snapshot. The time
+    // boundary protects reservations made after the scan began from a stale scan.
     await tx.execute(
-      `DELETE FROM drive_pdf_reservations
-       WHERE (status='uploaded' AND NOT (number=ANY(?::bigint[])))
-          OR (status='pending' AND created_at < CURRENT_TIMESTAMP - INTERVAL '1 day')`,
-      [driveNumberList],
+      `DELETE FROM drive_file_reservations
+       WHERE (status='uploaded' AND updated_at < ? AND NOT (number=ANY(?::bigint[])))
+          OR (status='pending' AND updated_at < CURRENT_TIMESTAMP - INTERVAL '2 minutes')`,
+      [driveScanStartedAt, [...driveNumbers]],
     );
-    const reservedRows = await tx.query<{ number: string | number }>('SELECT number FROM drive_pdf_reservations');
+    const reservedRows = await tx.query<{ number: string | number }>('SELECT number FROM drive_file_reservations');
     const unavailable = new Set([...driveNumbers, ...reservedRows.map(row => Number(row.number))]);
     const numbers: number[] = [];
     let candidate = 1;
     while (numbers.length < count) {
-      if (!Number.isSafeInteger(candidate)) throw new Error('Google Drive PDF numbering exceeded the supported range.');
+      if (!Number.isSafeInteger(candidate)) throw new Error('Google Drive image numbering exceeded the supported range.');
       if (!unavailable.has(candidate)) {
         numbers.push(candidate);
         unavailable.add(candidate);
       }
       candidate++;
     }
-    for (const number of numbers) await tx.execute('INSERT INTO drive_pdf_reservations(number,status) VALUES(? ,\'pending\')', [number]);
+    for (const number of numbers) await tx.execute('INSERT INTO drive_file_reservations(number,status) VALUES(? ,\'pending\')', [number]);
     return numbers;
   });
+}
+
+export async function refreshCardImageReservations(numbers: number[]) {
+  if (!numbers.length) return;
+  await db.execute("UPDATE drive_file_reservations SET updated_at=CURRENT_TIMESTAMP WHERE status='pending' AND number=ANY(?::bigint[])", [numbers]);
 }
 
 async function uploadCardFile(name: string, content: Buffer, mimeType: string, extension: 'png' | 'pdf' | null) {
@@ -176,13 +183,13 @@ async function uploadCardFile(name: string, content: Buffer, mimeType: string, e
   return { fileId: result.id, webViewLink: result.webViewLink || `https://drive.google.com/file/d/${result.id}/view` };
 }
 
-export const uploadCardPdf = (number: number, pdf: Buffer) => {
-  if (!Number.isSafeInteger(number) || number < 1) throw new Error('Google Drive PDF number is invalid.');
-  return uploadCardFile(String(number), pdf, 'application/pdf', null).then(async uploaded => {
-    await db.execute("UPDATE drive_pdf_reservations SET status='uploaded',drive_file_id=?,updated_at=CURRENT_TIMESTAMP WHERE number=?", [uploaded.fileId, number]);
+export const uploadCardQrImage = (number: number, image: Buffer) => {
+  if (!Number.isSafeInteger(number) || number < 1) throw new Error('Google Drive image number is invalid.');
+  return uploadCardFile(String(number), image, 'image/png', null).then(async uploaded => {
+    await db.execute("UPDATE drive_file_reservations SET status='uploaded',drive_file_id=?,updated_at=CURRENT_TIMESTAMP WHERE number=?", [uploaded.fileId, number]);
     return uploaded;
   }).catch(async error => {
-    await db.execute("DELETE FROM drive_pdf_reservations WHERE number=? AND status='pending'", [number]).catch(() => undefined);
+    await db.execute("DELETE FROM drive_file_reservations WHERE number=? AND status='pending'", [number]).catch(() => undefined);
     throw error;
   });
 };
