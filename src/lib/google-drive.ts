@@ -5,6 +5,24 @@ import { db, transaction } from '@/lib/db';
 type ServiceAccount = { client_email: string; private_key: string; token_uri?: string };
 let cachedToken: { value: string; expiresAt: number } | undefined;
 let cachedFolderId: string | undefined;
+let driveSchemaReady: Promise<void> | undefined;
+
+/** Keep deployments usable even when the latest additive migration was missed.
+ * All statements are idempotent; the migration runner remains the normal path. */
+export async function ensureDriveSchema() {
+  if (!driveSchemaReady) {
+    driveSchemaReady = (async () => {
+      await db.execute(`CREATE TABLE IF NOT EXISTS drive_file_counters(counter_name VARCHAR(80) PRIMARY KEY,next_value BIGINT NOT NULL CHECK(next_value>=1))`);
+      await db.execute(`CREATE TABLE IF NOT EXISTS drive_file_reservations(number BIGINT PRIMARY KEY CHECK(number>=1),status VARCHAR(16) NOT NULL CHECK(status IN ('pending','uploaded')),drive_file_id VARCHAR(128),created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`);
+      await db.execute(`CREATE INDEX IF NOT EXISTS idx_drive_file_reservations_status ON drive_file_reservations(status,created_at)`);
+      await db.execute(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS drive_file_name VARCHAR(64)`);
+    })().catch(error => {
+      driveSchemaReady = undefined;
+      throw error;
+    });
+  }
+  await driveSchemaReady;
+}
 
 export function googleDriveConfigured() {
   const hasServiceAccount = Boolean(process.env.GOOGLE_DRIVE_SERVICE_ACCOUNT_JSON?.trim());
@@ -126,6 +144,7 @@ async function existingDriveFileNumbers(token: string, folderId: string) {
  * across server instances, and pending rows protect numbers before upload finishes. */
 export async function reserveCardImageNumbers(count: number) {
   if (!Number.isInteger(count) || count < 1 || count > 100) throw new Error('Drive image number reservation count is invalid.');
+  await ensureDriveSchema();
   const token = await accessToken();
   const folderId = await resolveFolderId(token);
   const driveScanStartedAt = new Date();

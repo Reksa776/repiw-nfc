@@ -3,6 +3,7 @@ import { db, demo, makeActivationCode, transaction } from '@/lib/db';
 import { encryptActivationCode,hashActivationCode } from '@/lib/security';
 import { requireAdmin, jsonError, sameOrigin } from '@/lib/http';
 import { safeBaseURL } from '@/lib/validation';
+import { ensureDriveSchema } from '@/lib/google-drive';
 export const runtime = 'nodejs', dynamic = 'force-dynamic';
 
 export async function POST(req: NextRequest, ctx: { params: Promise<{ code: string }> }) {
@@ -10,6 +11,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
   if (!await requireAdmin()) return jsonError('Silakan login admin.', 401);
   const { code } = await ctx.params;
   if (!/^RP-[A-F0-9]{10}$/.test(code)) return jsonError('ID kartu tidak valid.', 400);
+  try { await ensureDriveSchema(); } catch (error) { console.error('Could not prepare Drive file schema', error); return jsonError('Skema database belum siap. Jalankan migrasi database terbaru.', 503); }
   let base: string;
   try { base = safeBaseURL(); } catch { return jsonError('BASE_URL belum dikonfigurasi dengan benar.', 500); }
   const activationCode = makeActivationCode();

@@ -6,6 +6,7 @@ import { db, demo } from '@/lib/db';
 import { decryptActivationCode } from '@/lib/security';
 import { requireAdmin, jsonError } from '@/lib/http';
 import { safeBaseURL } from '@/lib/validation';
+import { ensureDriveSchema } from '@/lib/google-drive';
 
 export const runtime = 'nodejs', dynamic = 'force-dynamic';
 
@@ -21,6 +22,7 @@ export async function GET() {
   if (!await requireAdmin()) return jsonError('Silakan login admin.', 401);
 
   try {
+    await ensureDriveSchema();
     const rows = await db.query<{ code: string; drive_file_name: string | null; activation_code_encrypted: string | null }>(
       'SELECT code,drive_file_name,activation_code_encrypted FROM cards WHERE demo=? AND active=0 ORDER BY id',
       [demo ? 1 : 0],
