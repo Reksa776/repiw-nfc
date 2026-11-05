@@ -21,7 +21,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
     const [fileNumber] = await reserveCardImageNumbers(1);
     const uploaded = await uploadCardQrImage(fileNumber, image);
     const driveFileName = String(fileNumber);
-    await db.execute('UPDATE cards SET drive_file_name=? WHERE code=? AND demo=?',[driveFileName,card.code,demo?1:0]);
+    await db.execute('UPDATE cards SET drive_file_name=?,drive_file_url=? WHERE code=? AND demo=?',[driveFileName,uploaded.webViewLink,card.code,demo?1:0]);
     return NextResponse.json({ ok: true, code: card.code, driveUrl: uploaded.webViewLink, driveFileName }, { headers: { 'Cache-Control': 'no-store' } });
   } catch (error) {
     console.error(`Could not upload QR image for ${code} to Google Drive`, error);
