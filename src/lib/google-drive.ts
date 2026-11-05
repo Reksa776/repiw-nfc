@@ -1,6 +1,6 @@
 import 'server-only';
 import crypto from 'node:crypto';
-import { db } from '@/lib/db';
+import { db, transaction } from '@/lib/db';
 
 type ServiceAccount = { client_email: string; private_key: string; token_uri?: string };
 let cachedToken: { value: string; expiresAt: number } | undefined;
@@ -92,9 +92,9 @@ async function resolveFolderId(token: string) {
   return cachedFolderId = createdBody.id;
 }
 
-async function nextDrivePdfNumber(token: string, folderId: string) {
+async function existingDrivePdfNumbers(token: string, folderId: string) {
   let pageToken: string | undefined;
-  let highest = 0;
+  const numbers = new Set<number>();
   do {
     const query = new URLSearchParams({
       q: `'${folderId}' in parents and trashed=false`,
@@ -112,32 +112,48 @@ async function nextDrivePdfNumber(token: string, folderId: string) {
     if (!response.ok) throw new Error(`Google Drive file lookup failed (${response.status}): ${body.error?.errors?.[0]?.reason || body.error?.message || 'Unknown API error'}`);
     for (const file of body.files || []) {
       const match = /^(\d+)(?:\.pdf)?$/i.exec(file.name || '');
-      if (match) highest = Math.max(highest, Number(match[1]));
+      if (match) {
+        const number = Number(match[1]);
+        if (Number.isSafeInteger(number) && number > 0) numbers.add(number);
+      }
     }
     pageToken = body.nextPageToken;
   } while (pageToken);
-  if (!Number.isSafeInteger(highest + 1)) throw new Error('Google Drive PDF numbering exceeded the supported range.');
-  return highest + 1;
+  return numbers;
 }
 
-/** Reserve a contiguous set of PDF names. The Drive scan recovers the number
- * after manual edits, while the database counter prevents concurrent batches
- * on different server instances from reserving the same numbers. */
+/** Reserve the lowest unused PDF numbers. A database lock serializes reservations
+ * across server instances, and pending rows protect numbers before upload finishes. */
 export async function reserveCardPdfNumbers(count: number) {
   if (!Number.isInteger(count) || count < 1 || count > 100) throw new Error('PDF number reservation count is invalid.');
   const token = await accessToken();
   const folderId = await resolveFolderId(token);
-  const firstAvailable = await nextDrivePdfNumber(token, folderId);
-  const rows = await db.query<{ first_number: string | number }>(
-    `INSERT INTO drive_file_counters(counter_name,next_value) VALUES('card_pdfs',?::bigint + ?::bigint)
-     ON CONFLICT(counter_name) DO UPDATE
-     SET next_value=GREATEST(drive_file_counters.next_value,EXCLUDED.next_value-?::bigint)+?::bigint
-     RETURNING (next_value-?::bigint) AS first_number`,
-    [firstAvailable, count, count, count, count],
-  );
-  const first = Number(rows[0]?.first_number);
-  if (!Number.isSafeInteger(first) || first < 1 || !Number.isSafeInteger(first + count - 1)) throw new Error('Could not reserve valid Google Drive PDF numbers.');
-  return Array.from({ length: count }, (_, index) => first + index);
+  const driveNumbers = await existingDrivePdfNumbers(token, folderId);
+  return transaction(async tx => {
+    await tx.execute(`INSERT INTO drive_file_counters(counter_name,next_value) VALUES('card_pdfs',1) ON CONFLICT(counter_name) DO NOTHING`);
+    await tx.query('SELECT next_value FROM drive_file_counters WHERE counter_name=? FOR UPDATE', ['card_pdfs']);
+    const driveNumberList = [...driveNumbers];
+    await tx.execute(
+      `DELETE FROM drive_pdf_reservations
+       WHERE (status='uploaded' AND NOT (number=ANY(?::bigint[])))
+          OR (status='pending' AND created_at < CURRENT_TIMESTAMP - INTERVAL '1 day')`,
+      [driveNumberList],
+    );
+    const reservedRows = await tx.query<{ number: string | number }>('SELECT number FROM drive_pdf_reservations');
+    const unavailable = new Set([...driveNumbers, ...reservedRows.map(row => Number(row.number))]);
+    const numbers: number[] = [];
+    let candidate = 1;
+    while (numbers.length < count) {
+      if (!Number.isSafeInteger(candidate)) throw new Error('Google Drive PDF numbering exceeded the supported range.');
+      if (!unavailable.has(candidate)) {
+        numbers.push(candidate);
+        unavailable.add(candidate);
+      }
+      candidate++;
+    }
+    for (const number of numbers) await tx.execute('INSERT INTO drive_pdf_reservations(number,status) VALUES(? ,\'pending\')', [number]);
+    return numbers;
+  });
 }
 
 async function uploadCardFile(name: string, content: Buffer, mimeType: string, extension: 'png' | 'pdf' | null) {
@@ -162,5 +178,11 @@ async function uploadCardFile(name: string, content: Buffer, mimeType: string, e
 
 export const uploadCardPdf = (number: number, pdf: Buffer) => {
   if (!Number.isSafeInteger(number) || number < 1) throw new Error('Google Drive PDF number is invalid.');
-  return uploadCardFile(String(number), pdf, 'application/pdf', null);
+  return uploadCardFile(String(number), pdf, 'application/pdf', null).then(async uploaded => {
+    await db.execute("UPDATE drive_pdf_reservations SET status='uploaded',drive_file_id=?,updated_at=CURRENT_TIMESTAMP WHERE number=?", [uploaded.fileId, number]);
+    return uploaded;
+  }).catch(async error => {
+    await db.execute("DELETE FROM drive_pdf_reservations WHERE number=? AND status='pending'", [number]).catch(() => undefined);
+    throw error;
+  });
 };
