@@ -19,19 +19,18 @@ export async function GET() {
     const rows = await db.query<{
       code: string;
       drive_file_name: string | null;
-      drive_file_url: string | null;
       activation_code_encrypted: string | null;
     }>(
-      'SELECT code,drive_file_name,drive_file_url,activation_code_encrypted FROM cards WHERE demo=? AND active=0 ORDER BY id',
+      'SELECT code,drive_file_name,activation_code_encrypted FROM cards WHERE demo=? AND active=0 ORDER BY id',
       [demo ? 1 : 0],
     );
     const lines = [
-      ['File Drive', 'Kode Aktivasi', 'Kode ID Kartu', 'QR'].map(csvCell).join(','),
+      ['File Drive', 'Kode Aktivasi', 'Kode ID Kartu', 'QR (gambar ada di Excel)'].map(csvCell).join(','),
       ...rows.map(row => [
         row.drive_file_name || '',
         row.activation_code_encrypted ? decryptActivationCode(row.activation_code_encrypted) : '',
         row.code,
-        row.drive_file_url || '',
+        row.code ? 'QR tersedia di file Excel' : '',
       ].map(csvCell).join(',')),
     ];
     return new NextResponse(`\uFEFF${lines.join('\r\n')}`, {
