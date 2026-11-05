@@ -16,7 +16,7 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ code: stri
     const [card] = await tx.query<{ id: number | string; active: number }>('SELECT id,active FROM cards WHERE code=? AND demo=? FOR UPDATE', [code, demo ? 1 : 0]);
     if (!card) return 'missing' as const;
     if (card.active) return 'active' as const;
-    await tx.execute('UPDATE cards SET secret_hash=?,activation_code_encrypted=?,drive_pdf_name=NULL,drive_file_name=NULL WHERE id=?', [hashActivationCode(activationCode), encryptActivationCode(activationCode), card.id]);
+    await tx.execute('UPDATE cards SET secret_hash=?,activation_code_encrypted=?,drive_pdf_name=NULL,drive_file_name=NULL,drive_file_url=NULL WHERE id=?', [hashActivationCode(activationCode), encryptActivationCode(activationCode), card.id]);
     return 'ok' as const;
   });
   if (outcome === 'missing') return jsonError('Kartu tidak ditemukan.', 404);

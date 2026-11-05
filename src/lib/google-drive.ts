@@ -17,7 +17,9 @@ export async function ensureDriveSchema() {
       await db.execute(`CREATE INDEX IF NOT EXISTS idx_drive_file_reservations_status ON drive_file_reservations(status,created_at)`);
       await db.execute(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS drive_pdf_name VARCHAR(64)`);
       await db.execute(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS drive_file_name VARCHAR(64)`);
+      await db.execute(`ALTER TABLE cards ADD COLUMN IF NOT EXISTS drive_file_url VARCHAR(2048)`);
       await db.execute(`UPDATE cards SET drive_file_name=drive_pdf_name WHERE drive_file_name IS NULL AND drive_pdf_name IS NOT NULL`);
+      await db.execute(`UPDATE cards c SET drive_file_url='https://drive.google.com/file/d/' || r.drive_file_id || '/view' FROM drive_file_reservations r WHERE c.drive_file_url IS NULL AND c.drive_file_name=r.number::text AND r.status='uploaded' AND r.drive_file_id IS NOT NULL`);
     })().catch(error => {
       driveSchemaReady = undefined;
       throw error;

@@ -79,6 +79,10 @@ const migrations=[
  {name:'store_card_drive_file_name',sql:[
   `ALTER TABLE cards ADD COLUMN IF NOT EXISTS drive_file_name VARCHAR(64)`,
   `UPDATE cards SET drive_file_name=drive_pdf_name WHERE drive_file_name IS NULL AND drive_pdf_name IS NOT NULL`
+ ]},
+ {name:'store_card_drive_file_url',sql:[
+  `ALTER TABLE cards ADD COLUMN IF NOT EXISTS drive_file_url VARCHAR(2048)`,
+  `UPDATE cards c SET drive_file_url='https://drive.google.com/file/d/' || r.drive_file_id || '/view' FROM drive_file_reservations r WHERE c.drive_file_url IS NULL AND c.drive_file_name=r.number::text AND r.status='uploaded' AND r.drive_file_id IS NOT NULL`
  ]}
 ];
 

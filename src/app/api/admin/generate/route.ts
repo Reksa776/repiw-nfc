@@ -44,7 +44,7 @@ export async function POST(req:NextRequest) {
         const uploaded = await uploadCardQrImage(fileNumber,qrImage);
         item.driveUrl = uploaded.webViewLink;
         item.driveFileName = String(fileNumber);
-        await db.execute('UPDATE cards SET drive_file_name=? WHERE code=? AND demo=?',[item.driveFileName,item.code,demo?1:0]);
+        await db.execute('UPDATE cards SET drive_file_name=?,drive_file_url=? WHERE code=? AND demo=?',[item.driveFileName,uploaded.webViewLink,item.code,demo?1:0]);
       } catch (error) {
         console.error(`Could not upload QR image for ${item.code} to Google Drive`,error);
         item.driveError = error instanceof Error ? error.message.slice(0,180) : 'Upload gagal';
