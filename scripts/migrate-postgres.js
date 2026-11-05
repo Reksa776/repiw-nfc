@@ -72,9 +72,13 @@ const migrations=[
  {name:'store_card_drive_pdf_name',sql:[
   `ALTER TABLE cards ADD COLUMN IF NOT EXISTS drive_pdf_name VARCHAR(64)`
  ]},
- {name:'drive_pdf_number_reservations',sql:[
-  `CREATE TABLE IF NOT EXISTS drive_pdf_reservations(number BIGINT PRIMARY KEY CHECK(number>=1),status VARCHAR(16) NOT NULL CHECK(status IN ('pending','uploaded')),drive_file_id VARCHAR(128),created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
-  `CREATE INDEX IF NOT EXISTS idx_drive_pdf_reservations_status ON drive_pdf_reservations(status,created_at)`
+ {name:'drive_file_number_reservations',sql:[
+  `CREATE TABLE IF NOT EXISTS drive_file_reservations(number BIGINT PRIMARY KEY CHECK(number>=1),status VARCHAR(16) NOT NULL CHECK(status IN ('pending','uploaded')),drive_file_id VARCHAR(128),created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP)`,
+  `CREATE INDEX IF NOT EXISTS idx_drive_file_reservations_status ON drive_file_reservations(status,created_at)`
+ ]},
+ {name:'store_card_drive_file_name',sql:[
+  `ALTER TABLE cards ADD COLUMN IF NOT EXISTS drive_file_name VARCHAR(64)`,
+  `UPDATE cards SET drive_file_name=drive_pdf_name WHERE drive_file_name IS NULL AND drive_pdf_name IS NOT NULL`
  ]}
 ];
 

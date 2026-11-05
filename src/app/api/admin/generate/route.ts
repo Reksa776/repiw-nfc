@@ -3,8 +3,8 @@ import { db,makeActivationCode,makeCode,transaction,demo } from '@/lib/db';
 import { encryptActivationCode,hashActivationCode } from '@/lib/security';
 import { generateSchema,safeBaseURL } from '@/lib/validation';
 import { requireAdmin,jsonError,sameOrigin } from '@/lib/http';
-import { createCardActivationPdf } from '@/lib/card-pdf';
-import { googleDriveConfigured,reserveCardPdfNumbers,uploadCardPdf } from '@/lib/google-drive';
+import QRCode from 'qrcode';
+import { googleDriveConfigured,refreshCardImageReservations,reserveCardImageNumbers,uploadCardQrImage } from '@/lib/google-drive';
 export const runtime='nodejs';
 export async function POST(req:NextRequest) {
   if(!sameOrigin(req)) return jsonError('Permintaan lintas situs ditolak.',403);
@@ -30,22 +30,23 @@ export async function POST(req:NextRequest) {
   if (googleDriveConfigured()) {
     let numbers: number[] = [];
     try {
-      numbers = await reserveCardPdfNumbers(items.length);
+      numbers = await reserveCardImageNumbers(items.length);
     } catch (error) {
-      console.error('Could not reserve Google Drive PDF names',error);
+      console.error('Could not reserve Google Drive image names',error);
       for (const item of items) item.driveError = error instanceof Error ? error.message.slice(0,180) : 'Upload gagal';
     }
     for (const [index,item] of items.entries()) {
       if (!numbers.length) break;
       try {
-        const pdf = createCardActivationPdf(item.code,item.activationCode,item.qrURL);
+        await refreshCardImageReservations(numbers);
+        const qrImage = await QRCode.toBuffer(item.qrURL,{type:'png',width:600,margin:2,errorCorrectionLevel:'H'});
         const fileNumber = numbers[index];
-        const uploaded = await uploadCardPdf(fileNumber,pdf);
+        const uploaded = await uploadCardQrImage(fileNumber,qrImage);
         item.driveUrl = uploaded.webViewLink;
         item.driveFileName = String(fileNumber);
-        await db.execute('UPDATE cards SET drive_pdf_name=? WHERE code=? AND demo=?',[item.driveFileName,item.code,demo?1:0]);
+        await db.execute('UPDATE cards SET drive_file_name=? WHERE code=? AND demo=?',[item.driveFileName,item.code,demo?1:0]);
       } catch (error) {
-        console.error(`Could not upload QR for ${item.code} to Google Drive`,error);
+        console.error(`Could not upload QR image for ${item.code} to Google Drive`,error);
         item.driveError = error instanceof Error ? error.message.slice(0,180) : 'Upload gagal';
       }
     }
@@ -54,7 +55,7 @@ export async function POST(req:NextRequest) {
   }
   const uploadedCount = items.filter(item=>item.driveUrl).length;
   const notice = googleDriveConfigured()
-    ? `Unduh CSV sekarang. Kode aktivasi hanya ditampilkan sekali. PDF kartu di Drive: ${uploadedCount}/${items.length}.`
+    ? `Unduh CSV sekarang. Kode aktivasi hanya ditampilkan sekali. Gambar QR di Drive: ${uploadedCount}/${items.length}.`
     : 'Kartu berhasil dibuat, tetapi Google Drive belum dikonfigurasi. Kode aktivasi hanya ditampilkan sekali.';
   return NextResponse.json({items,notice},{headers:{'Cache-Control':'no-store'}});
 }
